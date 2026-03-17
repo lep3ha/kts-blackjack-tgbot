@@ -146,6 +146,32 @@ def test_admin_ban_game_error_propagates():
     assert result.error_code == "not_found"
 
 
+def test_admin_topup_transport_error_returns_user_friendly_error_code():
+    client = SimpleNamespace(
+        admin_topup=AsyncMock(side_effect=RuntimeError("connection reset"))
+    )
+    handlers = GameCommandHandlers(client)
+    command = _make_command(command_type="admin_topup", username="target_user", amount=500)
+
+    result = asyncio.run(handlers.handle_admin_topup(command))
+
+    assert result.success is False
+    assert result.error_code == "transport_error"
+
+
+def test_admin_ban_transport_error_returns_user_friendly_error_code():
+    client = SimpleNamespace(
+        admin_ban=AsyncMock(side_effect=RuntimeError("connection reset"))
+    )
+    handlers = GameCommandHandlers(client)
+    command = _make_command(command_type="admin_ban", username="target_user", amount=None)
+
+    result = asyncio.run(handlers.handle_admin_ban(command))
+
+    assert result.success is False
+    assert result.error_code == "transport_error"
+
+
 def test_tutorial_handler_returns_success_without_game_call():
     client = SimpleNamespace()
     handlers = GameCommandHandlers(client)
@@ -157,3 +183,30 @@ def test_tutorial_handler_returns_success_without_game_call():
     assert result.command_type == "tutorial"
     assert isinstance(result.data, dict)
     assert result.data.get("chat_type") == "single"
+
+
+def test_group_stop_handler_requires_actor_telegram_id():
+    client = SimpleNamespace(group_player_stop=AsyncMock())
+    handlers = GameCommandHandlers(client)
+    command = _make_command(command_type="group_stop", chat_type="group", actor_telegram_id=None, amount=None)
+
+    result = asyncio.run(handlers.handle_group_stop(command))
+
+    assert result.success is False
+    assert result.error_code == "bad_request"
+    client.group_player_stop.assert_not_awaited()
+
+
+def test_group_stop_handler_calls_group_player_stop():
+    client = SimpleNamespace(
+        group_player_stop=AsyncMock(return_value=_success_envelope({"session_status": "in_progress"})),
+        register_player=AsyncMock(),
+        current_session=AsyncMock(),
+    )
+    handlers = GameCommandHandlers(client)
+    command = _make_command(command_type="group_stop", chat_type="group", amount=None)
+
+    result = asyncio.run(handlers.handle_group_stop(command))
+
+    assert result.success is True
+    client.group_player_stop.assert_awaited_once()

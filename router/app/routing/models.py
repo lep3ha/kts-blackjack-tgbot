@@ -9,6 +9,7 @@ CommandType = Literal[
     "group_open",
     "group_start",
     "group_join",
+    "group_stop",
     "single_start",
     "single_stop",
     "player_register",

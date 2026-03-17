@@ -121,9 +121,9 @@ def test_slash_single_start_maps_to_single_start():
     assert cmd.bet == 150
 
 
-def test_slash_group_start_maps_to_group_open():
+def test_slash_group_start_maps_to_group_start():
     cmd = normalizer.normalize(_make_message_envelope("/group_start 200", chat_type="group"))
-    assert cmd.command_type == "group_open"
+    assert cmd.command_type == "group_start"
     assert cmd.bet == 200
 
 
@@ -174,11 +174,13 @@ def _all_reply_actions(*keyboards) -> list[str]:
 
 def test_group_lobby_keyboard_actions_are_routable():
     kb = _build_group_lobby_keyboard(bet=100)
-    # /join 100 is handled by slash-command path; others must be in RU map
     ru_map = TelegramUpdateNormalizer._RU_TEXT_TO_COMMAND
     for btn in (b for row in kb.rows for b in row):
         if btn.title.startswith("Присоединиться"):
-            continue  # slash-prefix is fine
+            cmd = normalizer.normalize(_make_message_envelope(btn.title, chat_type="group"))
+            assert cmd.command_type == "group_join"
+            assert cmd.bet == 100
+            continue
         assert btn.action in ru_map or btn.action == "Начать игру", (
             f"Action '{btn.action}' not routable by normalizer"
         )
@@ -230,19 +232,19 @@ def test_session_keyboard_group_lobby_actions_are_routable():
 # Presenter: inline keyboard titles are Russian, action is callback_data
 # ---------------------------------------------------------------------------
 
-def test_inline_keyboard_hit_title_is_russian():
+def test_inline_keyboard_hit_title_is_english():
     kb = _build_action_inline_keyboard({"available_moves": ["hit", "stand"], "turn_version": 5})
     assert kb is not None
     titles = {btn.title for row in kb.rows for btn in row}
-    assert "Ещё" in titles
-    assert "Стоп" in titles
+    assert "Hit" in titles
+    assert "Stand" in titles
 
 
-def test_inline_keyboard_double_title_is_russian():
+def test_inline_keyboard_double_title_is_english():
     kb = _build_action_inline_keyboard({"available_moves": ["hit", "stand", "double"], "turn_version": 3})
     assert kb is not None
     titles = {btn.title for row in kb.rows for btn in row}
-    assert "Двойная" in titles
+    assert "Double" in titles
 
 
 def test_inline_keyboard_action_is_callback_data():
@@ -274,6 +276,12 @@ def test_russian_stop_roundtrip():
     action = _build_session_keyboard({"chat_mode": "single"}).rows[1][0].action  # "Закончить"
     cmd = normalizer.normalize(_make_message_envelope(action))
     assert cmd.command_type == "single_stop"
+
+
+def test_russian_join_reply_text_roundtrip_with_bet():
+    cmd = normalizer.normalize(_make_message_envelope("Присоединиться (250)", chat_type="group"))
+    assert cmd.command_type == "group_join"
+    assert cmd.bet == 250
 
 
 def test_tutorial_success_returns_start_game_keyboard_for_private_chat():

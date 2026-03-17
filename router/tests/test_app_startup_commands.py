@@ -50,5 +50,19 @@ def test_router_app_bot_commands_include_start_flows() -> None:
 
     assert "start" in command_names
     assert "single_start" in command_names
+    assert "create_lobby" in command_names
     assert "group_start" in command_names
-    assert "start_round" in command_names
+    assert "join" in command_names
+    assert "stop" in command_names
+
+
+def test_router_app_bot_commands_describe_arguments_and_group_stop_semantics() -> None:
+    commands = {item["command"]: item["description"] for item in RouterApp._bot_commands()}
+
+    assert commands["single_start"] == "Одиночная игра, аргумент: [bet]"
+    assert commands["create_lobby"] == "Открыть лобби, аргумент: <bet>"
+    assert commands["group_start"] == "Запустить уже открытое лобби"
+    assert commands["join"] == "Войти в лобби, аргумент: <bet>"
+    assert commands["stop"] == "Single: стоп, group: выйти из раунда"
+    assert commands["admin_topup"] == "Пополнить баланс: <username> <amount>"
+    assert commands["admin_ban"] == "Забанить игрока: <username>"

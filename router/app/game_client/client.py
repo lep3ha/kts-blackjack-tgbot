@@ -12,6 +12,7 @@ from app.game_client.models import (
     GameServiceEnvelope,
     GroupJoinRequest,
     GroupOpenRequest,
+    GroupPlayerStopRequest,
     GroupStartRequest,
     PlayerActionRequest,
     RegisterPlayerRequest,
@@ -62,6 +63,9 @@ class HttpGameServiceClient(GameServiceClient):
 
     async def group_join(self, request: GroupJoinRequest) -> GameServiceEnvelope:
         return await self._post("/bot/sessions/group/join", request.model_dump())
+
+    async def group_player_stop(self, request: GroupPlayerStopRequest) -> GameServiceEnvelope:
+        return await self._post("/bot/sessions/group/player-stop", request.model_dump())
 
     async def single_start(self, request: SingleStartRequest) -> GameServiceEnvelope:
         return await self._post("/bot/sessions/single/start", request.model_dump())

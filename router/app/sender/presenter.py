@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -83,6 +84,18 @@ def _present_error(
             _build_session_keyboard(data),
         )
 
+    if result.error_code == "not_your_turn":
+        return (
+            "Сейчас ход другого игрока. Дождись своей очереди.",
+            _build_session_keyboard(data),
+        )
+
+    if result.error_code == "invalid_local_action":
+        return (
+            "Это действие сейчас недоступно. Обнови состояние через /current.",
+            _build_session_keyboard(data),
+        )
+
     if result.error_code == "authorization_error":
         return (
             "Недостаточно прав для этого действия.",
@@ -104,6 +117,12 @@ def _present_error(
     if result.error_code == "game_logic_error":
         return (
             result.message or "Действие нарушает правила игры.",
+            _build_session_keyboard(data),
+        )
+
+    if result.error_code in {"transport_error", "internal_error"}:
+        return (
+            "Игровой сервис временно недоступен. Попробуй снова через несколько секунд.",
             _build_session_keyboard(data),
         )
 
@@ -149,19 +168,22 @@ def _build_game_state_message(data: dict[str, Any] | None) -> str:
     if not data:
         return "Состояние игры обновлено."
 
-    session_status = data.get("session_status") or "unknown"
-    runtime_state = data.get("runtime_state") or "unknown"
-    turn_version = data.get("turn_version")
-    current_timer = data.get("current_timer")
+    runtime_state = data.get("runtime_state") or "неизвестно"
+    current_player = data.get("current_player") if isinstance(data.get("current_player"), dict) else {}
+    current_username = (
+        current_player.get("username")
+        or current_player.get("display_name")
+        or current_player.get("first_name")
+    ) if current_player else None
 
-    lines = [
-        f"Статус сессии: {session_status}",
-        f"Состояние раунда: {runtime_state}",
-    ]
-    if turn_version is not None:
-        lines.append(f"Версия хода: {turn_version}")
-    if current_timer:
-        lines.append(f"Таймер хода: {current_timer}")
+    if current_username:
+        lines = [f"Раунд: {runtime_state} | Ход: {current_username}"]
+    else:
+        lines = [f"Раунд: {runtime_state}"]
+
+    timer_line = _format_timer(data.get("current_timer"))
+    if timer_line:
+        lines.append(timer_line)
 
     dealer_line = _format_dealer(data)
     if dealer_line:
@@ -173,16 +195,6 @@ def _build_game_state_message(data: dict[str, Any] | None) -> str:
         lines.append("")
         lines.append("Игроки:")
         lines.extend(participants)
-
-    total_bank = _players_total_bank(data)
-    if total_bank is not None:
-        lines.append("")
-        lines.append(f"Общий счет игроков: {total_bank}")
-
-    available_moves = _format_available_moves(data)
-    if available_moves:
-        lines.append("")
-        lines.append(f"Доступные действия: {available_moves}")
 
     return "\n".join(lines)
 
@@ -200,24 +212,7 @@ def _build_game_over_message(data: dict[str, Any] | None) -> str:
     participants = _format_participants(data, include_results=True)
     if participants:
         lines.append("")
-        lines.append("Итоги:")
         lines.extend(participants)
-
-    total_bank = _players_total_bank(data)
-    if total_bank is not None:
-        lines.append("")
-        lines.append(f"Общий счет игроков: {total_bank}")
-
-    summary = data.get("summary")
-    if isinstance(summary, dict):
-        total_delta = summary.get("total_delta")
-        results_count = summary.get("results_count")
-        if total_delta is not None or results_count is not None:
-            lines.append("")
-            if results_count is not None:
-                lines.append(f"Результатов: {results_count}")
-            if total_delta is not None:
-                lines.append(f"Суммарная дельта: {total_delta}")
 
     return "\n".join(lines)
 
@@ -234,7 +229,7 @@ def _build_tutorial_message(*, chat_type: str) -> str:
     return (
         "Как играть:\n"
         "1) Нажми «Начать игру».\n"
-        "2) Используй кнопки Ещё/Стоп/Двойная во время хода.\n"
+        "2) Используй кнопки Hit/Stand/Double во время хода.\n"
         "3) Проверяй состояние кнопкой «Текущая»."
     )
 
@@ -299,6 +294,7 @@ def _build_session_keyboard(data: dict[str, Any] | None) -> UiKeyboard:
             kind="reply",
             rows=[
                 [UiButton(id="current", title="Текущая", action="Текущая")],
+                [UiButton(id="group_stop", title="Выйти из раунда", action="Выйти из раунда", style="danger")],
             ],
         )
 
@@ -312,9 +308,9 @@ def _build_session_keyboard(data: dict[str, Any] | None) -> UiKeyboard:
 
 
 _ACTION_TITLES: dict[str, str] = {
-    "hit": "Ещё",
-    "stand": "Стоп",
-    "double": "Двойная",
+    "hit": "Hit",
+    "stand": "Stand",
+    "double": "Double",
 }
 
 
@@ -389,13 +385,13 @@ def _format_participants(
             continue
 
         telegram_id = participant.get("telegram_id", "?")
-        display_name = participant.get("display_name") or participant.get("username") or participant.get("first_name") or telegram_id
-        marker = "-> " if telegram_id == current_player_id else ""
+        username = participant.get("username") or participant.get("display_name") or participant.get("first_name") or telegram_id
+        marker = "-> " if telegram_id == current_player_id else "   "
         bet = participant.get("bet")
         bank = participant.get("bank")
         cards = participant.get("cards")
 
-        line = f"{marker}{display_name}"
+        line = f"{marker}{username}"
         if bet is not None:
             line += f" | Ставка: {bet}"
         if bank is not None:
@@ -412,7 +408,8 @@ def _format_participants(
             if result is not None:
                 line += f" | {result}"
             if delta is not None:
-                line += f" | Выигрыш: {delta}"
+                delta_str = f"+{delta}" if delta >= 0 else str(delta)
+                line += f" ({delta_str})"
 
         lines.append(line)
 
@@ -518,6 +515,38 @@ def _extract_rank(card: str) -> str | None:
     if rank in {"2", "3", "4", "5", "6", "7", "8", "9"}:
         return rank
     return None
+
+
+def _format_timer(current_timer: Any) -> str | None:
+    """Format ISO datetime to 'Осталось: MM:SS' countdown."""
+    if not isinstance(current_timer, str):
+        return None
+
+    normalized = current_timer.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+
+    try:
+        deadline = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    else:
+        deadline = deadline.astimezone(timezone.utc)
+
+    now = datetime.now(timezone.utc)
+    remaining = deadline - now
+
+    if remaining.total_seconds() <= 0:
+        return "Осталось: 00:00"
+
+    total_seconds = int(remaining.total_seconds())
+    minutes = total_seconds // 60
+    seconds = total_seconds % 60
+
+    return f"Осталось: {minutes:02d}:{seconds:02d}"
 
 
 def _format_int(value: Any) -> str | None:

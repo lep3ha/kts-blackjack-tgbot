@@ -49,14 +49,14 @@ class RouterApp:
     def _bot_commands() -> list[dict[str, str]]:
         return [
             {"command": "start", "description": "Показать краткий туториал"},
-            {"command": "single_start", "description": "Запустить одиночную игру"},
-            {"command": "group_start", "description": "Открыть групповую сессию"},
-            {"command": "start_round", "description": "Запустить раунд в лобби"},
-            {"command": "join", "description": "Присоединиться к групповому лобби"},
+            {"command": "single_start", "description": "Одиночная игра, аргумент: [bet]"},
+            {"command": "create_lobby", "description": "Открыть лобби, аргумент: <bet>"},
+            {"command": "group_start", "description": "Запустить уже открытое лобби"},
+            {"command": "join", "description": "Войти в лобби, аргумент: <bet>"},
             {"command": "current", "description": "Показать текущее состояние"},
-            {"command": "stop", "description": "Остановить одиночную игру"},
-            {"command": "admin_topup", "description": "Админ: пополнить баланс"},
-            {"command": "admin_ban", "description": "Админ: забанить игрока"},
+            {"command": "stop", "description": "Single: стоп, group: выйти из раунда"},
+            {"command": "admin_topup", "description": "Пополнить баланс: <username> <amount>"},
+            {"command": "admin_ban", "description": "Забанить игрока: <username>"},
         ]
 
 
@@ -87,6 +87,7 @@ def create_app(settings: Settings) -> RouterApp:
     dispatcher.register("group_open", handlers.handle_group_open)
     dispatcher.register("group_start", handlers.handle_group_start)
     dispatcher.register("group_join", handlers.handle_group_join)
+    dispatcher.register("group_stop", handlers.handle_group_stop)
     dispatcher.register("single_start", handlers.handle_single_start)
     dispatcher.register("single_stop", handlers.handle_single_stop)
     dispatcher.register("player_register", handlers.handle_player_register)
@@ -101,7 +102,7 @@ def create_app(settings: Settings) -> RouterApp:
         dedup_ttl_seconds=settings.dedup_ttl_seconds,
     )
 
-    timeout_executor = GameServiceTimeoutExecutor(game_client)
+    timeout_executor = GameServiceTimeoutExecutor(game_client, sender_client)
     timer_worker = RedisTimerWorker(
         redis_client=redis,
         timeout_executor=timeout_executor,

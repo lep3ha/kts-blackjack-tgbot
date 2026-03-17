@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from app.routing.models import CommandType
@@ -7,13 +8,15 @@ from app.upstream.contracts import TelegramUpdateEnvelope
 
 
 class TelegramUpdateNormalizer:
+    _JOIN_REPLY_PATTERN = re.compile(r"^Присоединиться\s*\((\d+)\)$")
+
     _TEXT_TO_COMMAND: dict[str, tuple[CommandType, str | None]] = {
         "/start": ("tutorial", None),
         "/single_start": ("single_start", None),
-        "/group_start": ("group_open", None),
+        "/create_lobby": ("group_open", None),
+        "/group_start": ("group_start", None),
         "/start_round": ("group_start", None),
         "/join": ("group_join", None),
-        "/stop": ("single_stop", None),
         "/register": ("player_register", None),
         "/current": ("current_session", None),
         "/admin_topup": ("admin_topup", None),
@@ -30,7 +33,10 @@ class TelegramUpdateNormalizer:
         "Стоп": ("player_action", "stand"),
         "Двойная": ("player_action", "double"),
         "Текущая": ("current_session", None),
-        "Закончить": ("single_stop", None),
+        "Hit": ("player_action", "hit"),
+        "Stand": ("player_action", "stand"),
+        "Double": ("player_action", "double"),
+        "Выйти из раунда": ("group_stop", None),
         "Остановить игру": ("single_stop", None),
     }
 
@@ -84,20 +90,33 @@ class TelegramUpdateNormalizer:
 
         text = message.get("text")
         normalized_text = text.strip() if isinstance(text, str) else ""
-        command_key = normalized_text.split(" ")[0] if isinstance(text, str) else ""
+        raw_command_key = normalized_text.split(" ")[0] if isinstance(text, str) else ""
+        command_key = self._normalize_command_key(raw_command_key)
         bet = self._extract_bet_from_text(text)
 
         command_meta = self._TEXT_TO_COMMAND.get(command_key)
 
-        if command_key == "/group_start" and command_meta is not None:
+        if command_meta is None and command_key == "/stop":
+            command_meta = self._resolve_stop_command(payload)
+
+        if command_key in {"/create_lobby", "/group_start", "/start_round"} and command_meta is not None:
             if self._extract_chat_type(payload) != "group":
                 command_meta = None
 
         if command_meta is None and normalized_text == "Начать игру":
             command_meta = self._resolve_start_game_command(payload, context=context)
 
+        if command_meta is None and normalized_text in {"Закончить", "Остановить игру"}:
+            command_meta = self._resolve_stop_command(payload)
+
         if command_meta is None and isinstance(text, str):
             command_meta = self._RU_TEXT_TO_COMMAND.get(normalized_text)
+
+        if command_meta is None and isinstance(text, str):
+            join_bet = self._extract_join_bet_from_reply_text(normalized_text)
+            if join_bet is not None:
+                command_meta = ("group_join", None)
+                bet = join_bet
 
         if command_meta is None:
             return self._unsupported(
@@ -144,6 +163,24 @@ class TelegramUpdateNormalizer:
                 return "group_open", None
 
         return "single_start", None
+
+    @staticmethod
+    def _resolve_stop_command(payload: dict[str, Any]) -> tuple[CommandType, str | None]:
+        message = payload.get("message")
+        if isinstance(message, dict):
+            chat = message.get("chat")
+            if isinstance(chat, dict) and chat.get("type") in {"group", "supergroup"}:
+                return "group_stop", None
+
+        return "single_stop", None
+
+    @staticmethod
+    def _normalize_command_key(command_key: str) -> str:
+        if not command_key.startswith("/"):
+            return command_key
+
+        command_without_mention, _, _ = command_key.partition("@")
+        return command_without_mention or command_key
 
     def _from_callback_query(
         self,
@@ -327,6 +364,13 @@ class TelegramUpdateNormalizer:
             return int(parts[1])
         except ValueError:
             return None
+
+    @classmethod
+    def _extract_join_bet_from_reply_text(cls, text: str) -> int | None:
+        match = cls._JOIN_REPLY_PATTERN.match(text)
+        if match is None:
+            return None
+        return int(match.group(1))
 
     @staticmethod
     def _extract_admin_args(text: Any, command_type: CommandType) -> tuple[str | None, int | None]:

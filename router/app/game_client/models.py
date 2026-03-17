@@ -38,6 +38,14 @@ class GroupJoinRequest(BaseModel):
     bet: int
 
 
+class GroupPlayerStopRequest(BaseModel):
+    chat_id: str
+    chat_type: Literal["group"] = "group"
+    actor_telegram_id: str
+    actor_username: str | None = None
+    actor_first_name: str | None = None
+
+
 class SingleStartRequest(BaseModel):
     chat_id: str
     chat_type: Literal["single"] = "single"

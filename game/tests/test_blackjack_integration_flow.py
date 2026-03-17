@@ -241,6 +241,7 @@ class TestBlackjackIntegrationFlow(AioHTTPTestCase):
         stop_data = await stop_resp.json()
         assert stop_data["success"] is True
         assert stop_data["data"]["session_status"] == "closed"
+        assert len(stop_data["data"]["dealer"]["cards"]) == 3
         assert stop_data["data"]["participants"][0]["participant_status"] == "settled"
         assert stop_data["data"]["participants"][0]["result"] == "win"
 

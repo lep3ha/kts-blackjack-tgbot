@@ -15,12 +15,24 @@
 ## Нормализация команд
 
 Источники команд:
-- текстовые slash-команды (`/start`, `/single_start`, `/group_start`, ...)
+- текстовые slash-команды (`/start`, `/single_start`, `/create_lobby`, `/group_start`, ...)
 - reply keyboard (`Начать игру`, `Текущая`, `Остановить игру`, ...)
 - callback data inline-кнопок (`action:hit`, ...)
 
+Ключевая семантика slash-команд:
+- `/create_lobby <bet>` -> открывает новое групповое лобби
+- `/group_start` -> запускает уже открытое лобби
+- `/join <bet>` -> присоединяет игрока к открытому лобби
+- `/stop` -> в `single` завершает сессию, в `group` переводит игрока в inactive через group player stop
+- `/start_round` -> legacy alias для `/group_start`
+
+Для групп поддерживается Telegram-вариант slash-команд с mention бота:
+- `/start@blackjack_by_lep3ha_bot`
+- `/create_lobby@blackjack_by_lep3ha_bot 200`
+- `/group_start@blackjack_by_lep3ha_bot`
+
 Специальный кейс:
-- `Начать игру` маршрутизируется контекстно через `reply_action_hint`.
+- `Начать игру` маршрутизируется контекстно через `reply_action_hint`. До открытия лобби это ведёт в `group_open`, после открытия лобби — в `group_start`. 
 
 ## Ошибки и отказоустойчивость
 

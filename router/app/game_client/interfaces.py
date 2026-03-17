@@ -7,6 +7,7 @@ from app.game_client.models import (
     GameServiceEnvelope,
     GroupJoinRequest,
     GroupOpenRequest,
+    GroupPlayerStopRequest,
     GroupStartRequest,
     PlayerActionRequest,
     RegisterPlayerRequest,
@@ -25,6 +26,9 @@ class GameServiceClient(Protocol):
 
     async def group_join(self, request: GroupJoinRequest) -> GameServiceEnvelope:
         """Join a group session via game-service."""
+
+    async def group_player_stop(self, request: GroupPlayerStopRequest) -> GameServiceEnvelope:
+        """Stop the current group player while keeping the session alive when possible."""
 
     async def single_start(self, request: SingleStartRequest) -> GameServiceEnvelope:
         """Start a single session via game-service."""

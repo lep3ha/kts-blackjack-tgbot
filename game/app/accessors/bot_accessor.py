@@ -271,9 +271,8 @@ class BotGameAccessor:
             if seat.participant_status != ParticipantStatus.active:
                 raise StateConflictError("Only active participants can stop the single session")
 
-            settlements = machine.settlement_policy.build_settlements([seat], machine.model.dealer_cards)
-            await machine.repository.persist_resolution(machine.model, settlements=settlements)
-            await machine.repository.commit()
+            # single_stop should behave as if player clicked Stand.
+            await machine.apply_action(seat.position, "stand")
             return await self._build_session_snapshot(db, session.id)
 
         raise RuntimeError("Database session is unavailable")

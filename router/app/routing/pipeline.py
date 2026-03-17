@@ -47,8 +47,9 @@ class RouterPipeline:
             logger.info("Duplicate command skipped update_id=%s", command.update_id)
             return
 
-        if command.command_type == "player_action":
-            await self._delete_previous_message(command.chat_id)
+        await self._cancel_timeout_if_needed(command=command, result=result, context=context)
+
+        await self._delete_previous_message_if_needed(command=command, result=result)
 
         outbound = present_router_result(command.chat_id, result)
         message_id = await self._sender.send_text(
@@ -66,18 +67,33 @@ class RouterPipeline:
 
         await self._schedule_timeout_if_needed(command=command, result=result)
 
-    async def _delete_previous_message(self, chat_id: str) -> None:
+    async def _delete_previous_message_if_needed(
+        self,
+        *,
+        command: RouterCommand,
+        result: RouterResult,
+    ) -> None:
+        if command.command_type != "player_action" or not result.success:
+            return
+
         if self._session_context_store is None:
             return
+
         try:
-            context = await self._session_context_store.get(chat_id)
-            if context is not None and context.last_bot_message_id is not None:
-                await self._sender.delete_message(
-                    chat_id=chat_id,
-                    message_id=context.last_bot_message_id,
-                )
+            context = await self._session_context_store.get(command.chat_id)
+            if context is None or context.last_bot_message_id is None:
+                return
+
+            # Delete previous game-state message only for the current player's successful move.
+            if context.current_player_telegram_id is not None and command.actor_telegram_id != context.current_player_telegram_id:
+                return
+
+            await self._sender.delete_message(
+                chat_id=command.chat_id,
+                message_id=context.last_bot_message_id,
+            )
         except Exception:
-            logger.debug("Failed to delete previous message chat_id=%s", chat_id)
+            logger.debug("Failed to delete previous message chat_id=%s", command.chat_id)
 
     async def _load_context_for_normalization(self, envelope: TelegramUpdateEnvelope) -> SessionContext | None:
         if self._session_context_store is None:
@@ -186,6 +202,42 @@ class RouterPipeline:
             turn_version=turn_version,
             due_at=due_at,
         )
+
+    async def _cancel_timeout_if_needed(
+        self,
+        *,
+        command: RouterCommand,
+        result: RouterResult,
+        context: SessionContext | None,
+    ) -> None:
+        if command.command_type != "player_action" or not result.success:
+            return
+
+        if command.turn_version is None:
+            return
+
+        if context is None or context.session_id is None:
+            return
+
+        if context.current_player_telegram_id is None:
+            return
+
+        if command.actor_telegram_id != context.current_player_telegram_id:
+            return
+
+        try:
+            await self._timer_scheduler.cancel_timeout(
+                chat_id=command.chat_id,
+                session_id=context.session_id,
+                turn_version=command.turn_version,
+            )
+        except Exception:
+            logger.debug(
+                "Failed to cancel timeout chat_id=%s session_id=%s turn_version=%s",
+                command.chat_id,
+                context.session_id,
+                command.turn_version,
+            )
 
 
 def _parse_due_at(value: str) -> datetime | None:

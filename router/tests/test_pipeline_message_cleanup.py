@@ -42,6 +42,8 @@ def _make_context(last_bot_message_id: int | None = None) -> SessionContext:
     return SessionContext(
         chat_id="chat-1",
         chat_type="single",
+        session_id=42,
+        current_player_telegram_id="tg-1",
         last_bot_message_id=last_bot_message_id,
     )
 
@@ -79,6 +81,20 @@ def _make_pipeline(
 
 def _make_envelope() -> MagicMock:
     return MagicMock()
+
+
+def _make_envelope_with_chat(chat_id: str = "chat-1") -> MagicMock:
+    envelope = MagicMock()
+    envelope.update_id = 1
+    envelope.source_key = chat_id
+    envelope.payload = {
+        "message": {
+            "chat": {"id": chat_id, "type": "private"},
+            "from": {"id": "tg-1"},
+            "text": "Hit",
+        }
+    }
+    return envelope
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +277,36 @@ def test_delete_not_called_for_non_player_action():
     sender.delete_message.assert_not_awaited()
 
 
+def test_delete_not_called_when_player_action_failed():
+    context = _make_context(last_bot_message_id=50)
+    pipeline, sender, _, _ = _make_pipeline(context=context, command_type="player_action")
+    pipeline._processor.process.return_value = RouterResult(
+        success=False,
+        command_type="player_action",
+        message="not_your_turn",
+        error_code="not_your_turn",
+    )
+
+    asyncio.run(pipeline.process_envelope(_make_envelope()))
+
+    sender.delete_message.assert_not_awaited()
+
+
+def test_delete_not_called_when_player_action_from_non_current_player():
+    context = SessionContext(
+        chat_id="chat-1",
+        chat_type="single",
+        session_id=42,
+        current_player_telegram_id="someone-else",
+        last_bot_message_id=50,
+    )
+    pipeline, sender, _, _ = _make_pipeline(context=context, command_type="player_action")
+
+    asyncio.run(pipeline.process_envelope(_make_envelope()))
+
+    sender.delete_message.assert_not_awaited()
+
+
 def test_delete_not_called_when_no_context_store():
     """Pipeline with no context store should send fine without deletes."""
     normalizer = MagicMock()
@@ -332,6 +378,147 @@ def test_save_failure_does_not_crash_pipeline():
 
     # Should not raise
     asyncio.run(pipeline.process_envelope(_make_envelope()))
+
+    sender.send_text.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Timer cancel semantics for player actions
+# ---------------------------------------------------------------------------
+
+
+def test_cancel_timeout_called_for_successful_current_player_action():
+    normalizer = MagicMock()
+    normalizer.normalize.return_value = _make_command("player_action")
+
+    processor = AsyncMock()
+    processor.process.return_value = _make_result("player_action")
+
+    sender = AsyncMock()
+    sender.send_text.return_value = 77
+
+    timer_scheduler = AsyncMock()
+
+    context_store = AsyncMock()
+    context_store.get.return_value = _make_context(last_bot_message_id=11)
+    context_store.set.return_value = None
+
+    pipeline = RouterPipeline(
+        normalizer=normalizer,
+        processor=processor,
+        sender=sender,
+        timer_scheduler=timer_scheduler,
+        session_context_store=context_store,
+        context_ttl_seconds=600,
+    )
+
+    asyncio.run(pipeline.process_envelope(_make_envelope_with_chat()))
+
+    timer_scheduler.cancel_timeout.assert_awaited_once_with(
+        chat_id="chat-1",
+        session_id=42,
+        turn_version=2,
+    )
+
+
+def test_cancel_timeout_not_called_when_player_action_fails():
+    normalizer = MagicMock()
+    normalizer.normalize.return_value = _make_command("player_action")
+
+    processor = AsyncMock()
+    processor.process.return_value = RouterResult(
+        success=False,
+        command_type="player_action",
+        message="stale_turn",
+        error_code="stale_turn",
+    )
+
+    sender = AsyncMock()
+    sender.send_text.return_value = 77
+
+    timer_scheduler = AsyncMock()
+
+    context_store = AsyncMock()
+    context_store.get.return_value = _make_context(last_bot_message_id=11)
+    context_store.set.return_value = None
+
+    pipeline = RouterPipeline(
+        normalizer=normalizer,
+        processor=processor,
+        sender=sender,
+        timer_scheduler=timer_scheduler,
+        session_context_store=context_store,
+        context_ttl_seconds=600,
+    )
+
+    asyncio.run(pipeline.process_envelope(_make_envelope_with_chat()))
+
+    timer_scheduler.cancel_timeout.assert_not_awaited()
+
+
+def test_cancel_timeout_not_called_for_non_current_player():
+    normalizer = MagicMock()
+    normalizer.normalize.return_value = _make_command("player_action")
+
+    processor = AsyncMock()
+    processor.process.return_value = _make_result("player_action")
+
+    sender = AsyncMock()
+    sender.send_text.return_value = 77
+
+    timer_scheduler = AsyncMock()
+
+    context_store = AsyncMock()
+    context_store.get.return_value = SessionContext(
+        chat_id="chat-1",
+        chat_type="single",
+        session_id=42,
+        current_player_telegram_id="someone-else",
+        last_bot_message_id=11,
+    )
+    context_store.set.return_value = None
+
+    pipeline = RouterPipeline(
+        normalizer=normalizer,
+        processor=processor,
+        sender=sender,
+        timer_scheduler=timer_scheduler,
+        session_context_store=context_store,
+        context_ttl_seconds=600,
+    )
+
+    asyncio.run(pipeline.process_envelope(_make_envelope_with_chat()))
+
+    timer_scheduler.cancel_timeout.assert_not_awaited()
+
+
+def test_cancel_timeout_failure_does_not_crash_pipeline():
+    normalizer = MagicMock()
+    normalizer.normalize.return_value = _make_command("player_action")
+
+    processor = AsyncMock()
+    processor.process.return_value = _make_result("player_action")
+
+    sender = AsyncMock()
+    sender.send_text.return_value = 77
+
+    timer_scheduler = AsyncMock()
+    timer_scheduler.cancel_timeout.side_effect = RuntimeError("Redis down")
+
+    context_store = AsyncMock()
+    context_store.get.return_value = _make_context(last_bot_message_id=11)
+    context_store.set.return_value = None
+
+    pipeline = RouterPipeline(
+        normalizer=normalizer,
+        processor=processor,
+        sender=sender,
+        timer_scheduler=timer_scheduler,
+        session_context_store=context_store,
+        context_ttl_seconds=600,
+    )
+
+    asyncio.run(pipeline.process_envelope(_make_envelope_with_chat()))
 
     sender.send_text.assert_awaited_once()
 
