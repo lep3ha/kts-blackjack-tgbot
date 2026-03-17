@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-import app.accessors.bot_accessor as bot_module
-from app.accessors.bot_accessor import BotGameAccessor
+import app.accessors.bot.common as bot_common_module
+from app.accessors.bot import BotGameAccessor
 from app.domain.blackjack.turn_rules import PlayerTurnRules
 from app.errors import StateConflictError
 from app.models import ChatMode, ParticipantStatus, SessionStatus
@@ -99,10 +99,10 @@ def test_bot_timeout_noop_for_inactive_or_settled_current_player(monkeypatch):
     async def fake_load(db, session_id, *, turn_timeout_seconds=30, for_update=True):
         return DummyMachine(ParticipantStatus.inactive)
 
-    monkeypatch.setattr(bot_module, "get_db", fake_get_db)
+    monkeypatch.setattr(BotGameAccessor, "_iter_db", lambda self: fake_get_db())
     monkeypatch.setattr(BotGameAccessor, "_get_unfinished_session_by_chat_id", fake_get_unfinished_session_by_chat_id)
     monkeypatch.setattr(BotGameAccessor, "_build_session_snapshot", fake_build_session_snapshot)
-    monkeypatch.setattr(bot_module.BlackjackService, "load", staticmethod(fake_load))
+    monkeypatch.setattr(bot_common_module.BlackjackService, "load", staticmethod(fake_load))
 
     payload = BotTimeoutRequest(chat_id="chat-1", chat_type="single", turn_version=10)
 
@@ -136,9 +136,9 @@ def test_bot_timeout_requires_active_turn(monkeypatch):
     async def fake_load(db, session_id, *, turn_timeout_seconds=30, for_update=True):
         return DummyMachine()
 
-    monkeypatch.setattr(bot_module, "get_db", fake_get_db)
+    monkeypatch.setattr(BotGameAccessor, "_iter_db", lambda self: fake_get_db())
     monkeypatch.setattr(BotGameAccessor, "_get_unfinished_session_by_chat_id", fake_get_unfinished_session_by_chat_id)
-    monkeypatch.setattr(bot_module.BlackjackService, "load", staticmethod(fake_load))
+    monkeypatch.setattr(bot_common_module.BlackjackService, "load", staticmethod(fake_load))
 
     payload = BotTimeoutRequest(chat_id="chat-1", chat_type="single", turn_version=10)
 

@@ -6,7 +6,7 @@ from aiohttp.test_utils import AioHTTPTestCase
 
 from app.accessors import blackjack_accessor_key, catalog_accessor_key
 from app.accessors import bot_accessor_key
-from app.api.blackjack import setup_blackjack_routes
+from app.api.views import setup_blackjack_routes
 from app.api.middlewares import error_middleware
 
 

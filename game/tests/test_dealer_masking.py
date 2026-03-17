@@ -6,8 +6,7 @@ the dealer's second card is shown as "?" and the score is omitted from the prese
 import asyncio
 import pytest
 
-import app.accessors.bot_accessor as bot_module
-from app.accessors.bot_accessor import BotGameAccessor, _DEALER_REVEAL_STATES
+from app.accessors.bot import _DEALER_REVEAL_STATES
 from app.models import SessionStatus, ChatMode
 
 

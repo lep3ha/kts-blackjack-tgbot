@@ -1,7 +1,7 @@
 from aiohttp import web
 
 from app.accessors import bot_accessor_key, setup_accessors
-from app.accessors.bot_accessor import _DEALER_REVEAL_STATES
+from app.accessors.bot import _DEALER_REVEAL_STATES
 from app.core.config import Settings
 from app.schemas import DealerSnapshotResponse, GroupSessionSnapshotCanonicalResponse, GroupSessionSnapshotResponse
 

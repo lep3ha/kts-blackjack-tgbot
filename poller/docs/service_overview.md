@@ -2,25 +2,7 @@
 
 ## Назначение
 
-`poller` изолирует работу с Telegram Bot API и гарантирует доставку входящих update в Kafka topic `telegram.updates.raw`.
-
-Сервис решает три задачи:
-- устойчивый long polling с retry
-- безопасный commit offset только после подтвержденной публикации
-- контроль нагрузки через bounded queues и worker pool
-
-## Границы ответственности
-
-`poller` делает:
-- читает Telegram updates (`getUpdates`)
-- нормализует их в broker envelope
-- публикует в Kafka
-- сохраняет offset в локальном storage
-
-`poller` не делает:
-- не интерпретирует игровые команды
-- не хранит сессионный state игры
-- не отправляет игровые ответы в Telegram
+`poller` изолирует работу с Telegram Bot API и гарантирует публикацию update в Kafka с at-least-once semantics.
 
 ## Внешние зависимости
 
@@ -28,17 +10,31 @@
 - Kafka/Redpanda
 - локальная файловая система для offset state
 
-## Ключевые модули
+## Основные обязанности
 
-- `app/telegram/client.py` — HTTP-клиент Telegram + retry policy
-- `app/runtime/runner.py` — orchestration polling loop, partitioning, workers
-- `app/downstream/kafka.py` — публикация envelope в Kafka
-- `app/storage/offset_store.py` — файловое сохранение offset
-- `app/downstream/envelope.py` — сборка контракта сообщения для брокера
+- выполнять `getUpdates` с текущим offset;
+- назначать каждому update локальный sequence number;
+- публиковать `TelegramUpdateEnvelope` в Kafka;
+- подтверждать offset только после contiguous ack.
 
-## Контракт публикации
+## Ключевые runtime модули
 
-Каждый update публикуется как envelope с полями:
+- `app/telegram/client.py` — polling client и retry policy
+- `app/runtime/runner.py` — общий orchestrator runtime цикла
+- `app/runtime/producer.py` — long polling producer
+- `app/runtime/dispatcher.py` — ingress -> worker queues
+- `app/runtime/consumer.py` — worker publish + commit flow
+- `app/runtime/ack_tracker.py` — contiguous sequence tracking
+- `app/runtime/backpressure.py` — queue fill monitoring
+- `app/runtime/monitoring.py` — fail-fast supervision
+- `app/storage/offset_store.py` — atomic file-based offset persistence
+- `app/downstream/kafka.py` — Kafka producer wrapper
+
+## Публикационный контракт
+
+Каждый update превращается в `TelegramUpdateEnvelope` с полями:
+- `schema_version`
+- `event_name`
 - `update_id`
 - `update_type`
 - `source_key`
@@ -47,10 +43,11 @@
 - `received_at`
 - `payload`
 
-`partition_key` и `source_key` синхронизируют порядок обработки по источнику (chat/user) в downstream сервисах.
+`partition_key` используется для устойчивого downstream partitioning по источнику update.
 
-## Надежность и завершение
+## Надежность
 
-- offset сохраняется только после успешной downstream-публикации
-- на shutdown выполняется drain ingress/worker очередей
-- при аварии runtime-таски корректно отменяются, offset не продвигается по недоставленным событиям
+1. Offset сохраняется только после подтвержденной публикации.
+2. При параллельной обработке подтверждается только contiguous sequence.
+3. При падении worker offset не продвигается поверх «дырки».
+4. На graceful shutdown сервис сначала прекращает прием, затем дренирует очереди.
