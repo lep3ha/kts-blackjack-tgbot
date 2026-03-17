@@ -1,0 +1,4 @@
+aiohttp
+aiokafka
+pydantic
+pydantic-settings

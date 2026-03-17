@@ -1,0 +1,10 @@
+.DS_Store
+.git
+.gitignore
+**/__pycache__/
+**/.pytest_cache/
+**/*.pyc
+**/.env
+game/
+poller/docs/
+router/docs/
