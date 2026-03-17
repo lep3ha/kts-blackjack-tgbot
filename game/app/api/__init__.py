@@ -2,7 +2,7 @@
 
 from aiohttp import web
 
-from app.api.blackjack import BLACKJACK_VIEW_ROUTES, setup_blackjack_routes
+from app.api.views import BLACKJACK_VIEW_ROUTES, setup_blackjack_routes
 from app.api.docs import build_view_paths
 
 

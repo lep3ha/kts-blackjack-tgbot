@@ -1,126 +1,98 @@
-# Доменные Сущности И Ответственности
+# Entities And Responsibilities
 
-## ORM-Сущности (`app/models/__init__.py`)
+## ORM entities
 
-1. `Player`
-- Идентификатор: `id`.
-- Внешний идентификатор: `telegram_id` (уникальный).
-- Изменяемое поле: `bank`.
-- Временная метка: `created_at`.
+### `Player`
 
-2. `Deck`
-- Идентификатор: `id`.
-- Внешний идентификатор: `chat_id` (уникальный).
-- `meta` JSON для метаданных комнаты/колоды.
-- Временная метка: `created_at`.
+- уникальный `telegram_id`
+- текущий `bank`
+- флаг бана
 
-3. `GameSession`
-- Идентификатор: `id`.
-- FK: `deck_id -> Deck.id`.
-- Persisted lifecycle-статус (`SessionStatus`): `lobby_open|in_progress|stopped|closed`.
-- Runtime-поля: `dealer_cards`, `current_position`, `current_timer`.
-- Конфигурационные поля: `count_players`, `dealer_bet`.
-- Временная метка: `created_at`.
+### `Deck`
 
-4. `PlayerToSession`
-- Связь места игрока с игровой сессией.
-- Поля: `position`, `bet`, `cards`.
-- Ограничения:
-  - unique `(session_id, position)`
-  - проверка диапазона позиции `1..8`
+- логический chat context по `chat_id`
+- JSON `meta`
 
-5. `State`
-- Неизменяемая запись журнала событий.
-- Поля: `session_id`, `position`, `action`, `time`, `details`.
-- Проверка диапазона позиции `1..8`.
+### `GameSession`
 
-## Access-Слой (`app/accessors`)
+- FK на `deck_id`
+- persisted lifecycle status
+- `dealer_cards`, `current_position`, `current_timer`
+- `count_players`, `dealer_bet`
 
-1. `CatalogAccessor`
-- Отвечает за CRUD-подобные сценарии:
-  - create player
-  - create deck
-  - create session
-  - seat player
-- Выполняет проверки целостности и бизнес-правил до `commit`.
+### `PlayerToSession`
 
-2. `BlackjackAccessor`
-- Отвечает за runtime-сценарии игры:
-  - start session
-  - apply action
-  - force timeout
-  - read state
-- Преобразует сервисный контекст в DTO ответа API.
+- позиция игрока за столом
+- ставка и карты руки
+- participant status
 
-## Service-Слой (`app/services`)
+### `State`
 
-1. `BlackjackService`
-- Оркестрация state machine и управление транзакционным жизненным циклом операций.
-- Публичные методы:
-  - `start_session()`
-  - `apply_action(position, action)`
-  - `handle_timeout(position)`
-  - `available_events()`
+- immutable audit log для значимых игровых переходов
+- хранит `action`, `position`, `details`, timestamp
 
-Основное после рефакторинга:
-- сервис делегирует валидацию и ветвление в доменные правила,
-- сервис делегирует подготовку event payload в builder,
-- сервис делегирует разбор действия игрока в dispatcher,
-- сервис сам не хранит детализацию `hit/stand/double`.
+## Accessors
 
-2. `BlackjackRepository`
-- Транзакционный адаптер персистентности для callback-ов state machine.
-- Загружает снимок `BlackjackSessionContext`.
-- Сохраняет изменения фаз и события журнала.
+### `CatalogAccessor`
 
-3. `BlackjackSessionContext` / `PlayerSlotSnapshot`
-- In-memory runtime-проекция, которую использует state machine.
-- Содержит поля, необходимые для guard-условий и callback-ов переходов.
+Используется для CRUD-like сценариев: игроки, deck, сессии, посадка игрока.
 
-Примечание:
-- Runtime state machine state (например, `waiting/dealing/player_turn`) не равен persisted `SessionStatus`.
-- `BlackjackSessionContext` и `PlayerSlotSnapshot` определены в `app/domain/blackjack/context.py`.
+### `BlackjackAccessor`
 
-## API-Слой (`app/api`)
+Работает с runtime API по `session_id`:
+- start session
+- apply action
+- timeout
+- read state
 
-- Class-based view наследуются от `BaseView`.
-- Middleware маппит доменные исключения в единый формат ошибки.
-- Swagger-метаданные методов собираются в `/openapi.json`.
+### `BotGameAccessor`
 
-## Domain-Слой (`app/domain/blackjack`)
+Работает с bot-facing flows по `chat_id`:
+- group open/join/start/stop
+- single start/stop
+- current/last snapshot
+- timeout and player actions
+- admin operations
 
-1. `settings.py`
-- Конфигурация служебных runtime-параметров:
-  - разрешенные действия игрока,
-  - порог остановки дилера.
+## Service layer
 
-2. `turn_rules.py`
-- Валидация и ветвление хода игрока:
-  - старт сессии,
-  - player move,
-  - timeout,
-  - выбор следующей активной позиции,
-  - условия переходов state machine.
+### `BlackjackService`
 
-3. `event_context_builder.py`
-- Построение единого runtime-контекста для события state machine:
-  - `position`, `action`, `seat`, `projected_cards`, `projected_score`, `next_position`.
+Главный orchestration слой state machine. Делегирует:
+- validators и turn branching в domain;
+- repository writes в persistence слой;
+- расчет dealer/settlement в policy objects.
 
-4. `action_dispatch.py`
-- Единый dispatch действий игрока (`hit`, `stand`, `double`) в persistence-ready формат:
-  - итоговые карты,
-  - ставка,
-  - следующая позиция,
-  - флаг таймера,
-  - `details` для журнала.
+### `BlackjackRepository`
 
-5. `dealer_policy.py`
-- Правило поведения дилера (добор и остановка).
+Загружает runtime context и пишет side effects в БД транзакционно.
 
-6. `settlement_policy.py`
-- Расчет исходов (`result`) и дельт баланса (`delta`) для каждого игрока.
+### `BlackjackSessionContext` и `PlayerSlotSnapshot`
 
-## Работа Со Временем
+In-memory проекция состояния, с которой работает state machine.
 
-- Сервис использует helper `utc_now_naive()` из `app/core/datetime_utils.py`.
-- Helper возвращает UTC-время без `tzinfo`, чтобы оставаться совместимым с текущими колонками `DateTime` (`timestamp without time zone`) и при этом избегать deprecation warning для `datetime.utcnow()`.
+## Domain layer
+
+### `turn_rules.py`
+
+Валидирует старты, действия, timeout и выбор следующего playable игрока.
+
+### `event_context_builder.py`
+
+Собирает projected runtime context для validators, guards и action callbacks.
+
+### `action_dispatch.py`
+
+Преобразует `hit/stand/double` в единый persistence-ready payload.
+
+### `dealer_policy.py`
+
+Управляет добором карт дилера до stop threshold.
+
+### `settlement_policy.py`
+
+Строит `result` и `delta` для каждого игрока.
+
+## Время и таймеры
+
+Сервис использует `utc_now_naive()` для совместимости с БД-колонками без timezone. `current_timer` хранится на уровне сессии и проверяется при timeout-обработке.

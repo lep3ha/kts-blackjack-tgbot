@@ -1,77 +1,160 @@
 # Blackjack Telegram Bot
 
-Telegram-бот для игры в блэкджек — одиночный и групповой режим.
+Микросервисный Telegram-бот для игры в блэкджек в личных чатах и группах.
 
 ## Ссылка на бота
 
 https://t.me/blackjack_by_lep3ha_bot
 
-## Архитектура
+## Общая архитектура
 
 ```
-Telegram ──► poller ──► Kafka ──► router ──► game ──► PostgreSQL
-                                     │
-                                   Redis (сессии, дедупликация, таймеры)
+Telegram Bot API
+    │
+    ▼
+poller ──► redpanda(Kafka) ──► orchestrator ──► game ──► PostgreSQL
+                                  │
+                                  └──────────► Redis
 ```
 
-| Сервис | Описание |
+### Роли сервисов
+
+| Сервис | Роль |
 |---|---|
-| `poller` | Long-polling от Telegram API, публикует обновления в Kafka |
-| `router` | Kafka-consumer: нормализует команды, маршрутизирует в `game`, отправляет ответы в Telegram |
-| `game` | HTTP API игры (aiohttp + PostgreSQL + Alembic) |
-| `db` | PostgreSQL 15 |
-| `redis` | Контекст сессий, дедупликация сообщений, таймеры ходов |
-| `redpanda` | Kafka-совместимый брокер |
+| `poller` | Делает long polling в Telegram Bot API и публикует update в Kafka topic `telegram.updates.raw`. |
+| `orchestrator` | Читает update из Kafka, нормализует команды, вызывает `game`, рендерит ответы и работает с Redis-контекстом, dedup и таймерами. |
+| `game` | Хранит игровое состояние и реализует доменную логику blackjack через HTTP API. |
+| `db` | PostgreSQL 15 для игровых данных. |
+| `redis` | Контекст сессий, dedup ключи и очередь timeout-задач orchestrator. |
+| `redpanda` | Kafka-совместимый брокер сообщений. |
 
-## Запуск
+## Быстрый старт
 
 ```bash
 docker compose up --build
 ```
 
-Все сервисы запустятся автоматически. При первом старте `game` применяет миграции Alembic.
+Что происходит при старте:
+1. Поднимаются `db`, `redis`, `redpanda`.
+2. `topic-init` создает Kafka topic `telegram.updates.raw`.
+3. `game` применяет `alembic upgrade head` и стартует HTTP API.
+4. `poller` и `orchestrator` запускаются после готовности инфраструктуры.
 
-### Переменные окружения
+## Порты и внешние точки входа
 
-| Файл | Что задаёт |
+| Порт | Назначение |
 |---|---|
-| `poller/.env` | `TELEGRAM_TOKEN`, `KAFKA_BOOTSTRAP_SERVERS` |
-| `router/.env` | `TELEGRAM_TOKEN`, `KAFKA_BOOTSTRAP_SERVERS`, `REDIS_URL`, `GAME_BASE_URL` |
-| `game/.env` | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` |
-
-### Порты (localhost)
-
-| Порт | Сервис |
-|---|---|
-| `8001` | game HTTP API |
+| `8001` | `game` HTTP API |
 | `5433` | PostgreSQL |
 | `6379` | Redis |
-| `19092` | Redpanda (Kafka external) |
+| `19092` | Kafka external listener (Redpanda) |
+| `18082` | Redpanda PandaProxy |
 
-## Сборка
+## Локальная разработка по сервисам
 
-`poller` и `router` собираются из корневого `Dockerfile` (multi-stage targets `poller-runtime` и `router-runtime`).  
-`game` собирается из `game/Dockerfile`.
+### Game
+
+```bash
+cd game
+python -m pip install -r requirements.txt
+python -m alembic upgrade head
+python run.py
+```
+
+### Poller
+
+```bash
+cd poller
+python -m pip install -r requirements.txt
+python run.py
+```
+
+### Orchestrator
+
+```bash
+cd orchestrator
+python -m pip install -r requirements.txt
+python run.py
+```
+
+## Переменные окружения
+
+### Poller
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_BASE_URL`
+- `TELEGRAM_POLL_TIMEOUT`
+- `TELEGRAM_POLL_LIMIT`
+- `TELEGRAM_REQUEST_TIMEOUT`
+- `KAFKA_BOOTSTRAP_SERVERS`
+- `KAFKA_TOPIC_UPDATES`
+- `OFFSET_STATE_PATH`
+- `WORKER_COUNT`
+- `MAX_IN_FLIGHT_UPDATES`
+
+### Orchestrator
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_BASE_URL`
+- `GAME_SERVICE_BASE_URL`
+- `GAME_SERVICE_REQUEST_TIMEOUT_SECONDS`
+- `REDIS_URL`
+- `KAFKA_BOOTSTRAP_SERVERS`
+- `KAFKA_TOPIC_UPDATES`
+- `KAFKA_GROUP_ID`
+- `DEDUP_TTL_SECONDS`
+- `SESSION_CONTEXT_TTL_SECONDS`
+- `TIMER_RETENTION_SECONDS`
+
+### Game
+
+- `DB_HOST`
+- `DB_PORT`
+- `DB_USER`
+- `DB_PASSWORD`
+- `DB_NAME`
+- `HOST`
+- `PORT`
+- `BOT_SNAPSHOT_INCLUDE_LEGACY_FIELDS`
 
 ## Команды бота
 
-| Команда | Аргументы | Действие |
+| Команда | Аргументы | Семантика |
 |---|---|---|
-| `/start` | нет | Туториал с кнопкой «Начать игру» |
-| `/single_start` | `[bet]` | Одиночная игра в личном чате |
-| `/create_lobby` | `<bet>` | Открыть групповое лобби для подключения игроков |
-| `/group_start` | нет | Запустить уже открытое лобби |
-| `/join` | `<bet>` | Присоединиться к открытому групповому лобби |
-| `/current` | нет | Показать текущее состояние сессии |
-| `/stop` | нет | В личке завершает single-сессию, в группе переводит игрока в неактивное состояние |
-| `/admin_topup` | `<username> <amount>` | Пополнить баланс игрока |
-| `/admin_ban` | `<username>` | Забанить игрока |
-| `/start_round` | нет | Legacy alias для `/group_start` |
+| `/start` | нет | Показывает краткий туториал и стартовые кнопки. |
+| `/single_start` | `[bet]` | Запускает одиночную игру в личном чате. |
+| `/create_lobby` | `<bet>` | Открывает групповое лобби. |
+| `/group_start` | нет | Стартует уже открытое лобби. |
+| `/join` | `<bet>` | Подключает игрока к открытому групповому лобби. |
+| `/current` | нет | Возвращает текущее состояние игры. |
+| `/stop` | нет | В single режиме делает auto-stand и завершает текущую single-сессию; в group режиме выводит игрока из активного раунда. |
+| `/admin_topup` | `<username> <amount>` | Админская команда пополнения баланса. |
+| `/admin_ban` | `<username>` | Админская команда блокировки игрока. |
+| `/start_round` | нет | Legacy alias для `/group_start`. |
 
-В группах поддерживается Telegram-формат команд с mention бота, например:
+Поддерживаются Telegram-mention варианты команд в группах:
 - `/start@blackjack_by_lep3ha_bot`
 - `/create_lobby@blackjack_by_lep3ha_bot 200`
 - `/group_start@blackjack_by_lep3ha_bot`
+
+## Документация
+
+- [game/README.md](game/README.md)
+- [game/docs/README.md](game/docs/README.md)
+- [poller/README.md](poller/README.md)
+- [poller/docs/README.md](poller/docs/README.md)
+- [orchestrator/README.md](orchestrator/README.md)
+- [orchestrator/docs/README.md](orchestrator/docs/README.md)
+
+## Тесты
+
+Примеры запуска:
+
+```bash
+cd game && python -m pytest -q
+cd poller && python -m pytest -q
+cd orchestrator && python -m pytest -q
+```
 
 ## Автор
 

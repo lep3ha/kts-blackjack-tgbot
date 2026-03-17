@@ -9,7 +9,7 @@ services:
       - "5433:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
-      - ./game/docker/init-db:/docker-entrypoint-initdb.d
+      - ./db/init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d game_service"]
       interval: 2s
@@ -19,8 +19,9 @@ services:
   game:
     image: kts-blackjack-tgbot-game:local
     build:
-      context: ./game
+      context: .
       dockerfile: Dockerfile
+      target: game-runtime
     depends_on:
       db:
         condition: service_healthy
@@ -119,12 +120,12 @@ services:
     restart: unless-stopped
     init: true
 
-  router:
-    image: kts-blackjack-tgbot-router:local
+  orchestrator:
+    image: kts-blackjack-tgbot-orchestrator:local
     build:
       context: .
       dockerfile: Dockerfile
-      target: router-runtime
+      target: orchestrator-runtime
     depends_on:
       game:
         condition: service_healthy
@@ -135,7 +136,7 @@ services:
       topic-init:
         condition: service_completed_successfully
     env_file:
-      - ./router/.env
+      - ./orchestrator/.env
     environment:
       GAME_SERVICE_BASE_URL: http://game:8001
       REDIS_URL: redis://redis:6379/0

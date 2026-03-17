@@ -21,19 +21,6 @@ class OffsetStore(Protocol):
         """Persist the last confirmed offset."""
 
 
-class InMemoryOffsetStore:
-    """Temporary offset store used until durable storage is introduced."""
-
-    def __init__(self, initial_offset: int | None = None) -> None:
-        self._offset = initial_offset
-
-    async def load_offset(self) -> int | None:
-        return self._offset
-
-    async def save_offset(self, offset: int) -> None:
-        self._offset = offset
-
-
 class FileOffsetStore:
     """JSON-backed offset store with atomic file replacement."""
 

@@ -212,6 +212,6 @@ __marimo__/
 
 # Development / design notes (written during implementation, not shipped in repo)
 game/notes/
-router/notes/
+orchestrator/notes/
 poller/notes/
 notes/

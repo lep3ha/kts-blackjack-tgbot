@@ -1,20 +1,24 @@
 # Poller Service Docs
 
-Документация для микросервиса `poller` (Telegram long polling и публикация событий в Kafka).
+Навигация по документации `poller`.
 
-## Что делает сервис
+## Что описано
 
-- читает обновления из Telegram Bot API
-- хранит и продвигает offset
-- публикует нормализованные envelopes в Kafka (`telegram.updates.raw`)
+- long polling lifecycle;
+- offset persistence и contiguous commit semantics;
+- Kafka envelope contract;
+- bounded queues, worker pool и graceful shutdown.
 
-## Карта документации
+## Карта документов
 
-- `service_overview.md` — архитектурная роль сервиса, границы ответственности, интеграции.
-- `entities.md` — ключевые runtime-сущности и контракты (`QueuedUpdate`, `TelegramUpdateEnvelope`, `OffsetStore`, `UpdateSink`).
-- `runtime_lifecycle.md` — startup/main-loop/error-handling/shutdown и инварианты надежности.
+- [service_overview.md](service_overview.md) — роль сервиса, зависимости и ключевые runtime модули.
+- [entities.md](entities.md) — `QueuedUpdate`, `TelegramUpdateEnvelope`, `OffsetCommitTracker`, `OffsetStore`, `UpdateSink`.
+- [runtime_lifecycle.md](runtime_lifecycle.md) — startup, main loop, error handling, shutdown.
 
 ## Связанные файлы
 
-- `../README.md` — запуск и разработка poller-сервиса.
-- `../app/main.py` — сборка runtime-компонентов.
+- [../README.md](../README.md)
+- `../app/main.py`
+- `../app/runtime/`
+- `../app/downstream/`
+- `../app/storage/offset_store.py`

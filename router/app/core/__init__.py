@@ -1,1 +1,0 @@
-"""Core router components package."""

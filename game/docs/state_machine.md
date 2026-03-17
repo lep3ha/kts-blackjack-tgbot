@@ -1,36 +1,29 @@
-# State Machine Blackjack
+# Blackjack State Machine
 
-## Runtime-Состояния
-Реализованы в `app/services/blackjack_service.py`:
-- `waiting` (initial)
+## Runtime states
+
+В `app/services/blackjack_service.py` определены состояния:
+- `waiting`
 - `dealing`
 - `player_turn`
 - `dealer_turn`
 - `resolving`
-- `closed` (final)
+- `closed`
 
-## SessionStatus (persisted lifecycle)
-Persisted-статус сессии в БД (`SessionStatus`, хранится в `game_sessions.status`):
-- `lobby_open` — лобби открыто, игроки могут присоединяться/садиться
-- `in_progress` — игра/раунд в процессе (включая runtime-фазы `dealing`, `player_turn`, `dealer_turn`, `resolving`)
-- `stopped` — досрочно остановлена (админ/контракт bot stop)
-- `closed` — финальное закрытие
+## Persisted lifecycle
 
-`dealing`, `dealer_turn` и `resolving` являются транзиентными runtime-фазами, которыми управляет state chart.
+Persisted `SessionStatus` хранится в `game_sessions.status` и описывает внешний lifecycle:
+- `lobby_open`
+- `in_progress`
+- `stopped`
+- `closed`
 
-## State Mapping (runtime ↔ persisted)
+Runtime state и persisted status решают разные задачи:
+- runtime state нужен для выбора переходов state machine;
+- persisted status нужен для восстановления и внешних API-контрактов.
 
-Runtime state machine и persisted `SessionStatus` решают разные задачи:
-- runtime state (`waiting/dealing/player_turn/...`) нужен для точного управления переходами и авто-дренажа фаз.
-- persisted status (`lobby_open/in_progress/stopped/closed`) нужен для внешнего жизненного цикла и восстановления из БД.
+## Основные события
 
-Типичное соответствие:
-- `waiting` → `lobby_open`
-- `dealing/player_turn/dealer_turn/resolving` → `in_progress`
-- `closed` → `closed`
-- `stopped` не является runtime state chart фазой — это внешний persisted-статус.
-
-## События
 - `start_round`
 - `finish_deal`
 - `player_move`
@@ -38,76 +31,61 @@ Runtime state machine и persisted `SessionStatus` решают разные з�
 - `play_dealer`
 - `finalize_round`
 
-## Runtime-Пайплайн События
-Для каждого события в state machine используется один и тот же цикл:
-1. `prepare_event` формирует контекст через `EventContextBuilder`.
-2. Validators (`validate_*`) проверяют допустимость события.
-3. Guards (`keeps_same_turn`, `advances_to_*`) выбирают ветку перехода.
-4. Action callback (`apply_*`, `run_dealer_turn`, `settle_round`) сохраняет эффект через repository.
+## Пайплайн одного события
 
-Такой пайплайн делает поведение предсказуемым: подготовка контекста, решение, эффект.
+1. `prepare_event` собирает runtime context.
+2. Validators проверяют допустимость операции.
+3. Guards выбирают целевую ветку transition.
+4. Action callback сохраняет side effects через repository.
 
-## Карта Переходов
-1. `waiting --start_round--> dealing`
-2. `dealing --finish_deal--> player_turn`, если есть хотя бы одна игровая рука
-3. `dealing --finish_deal--> dealer_turn`, если игровых рук нет
-4. `player_turn --player_move(hit with projected_score < 21)--> player_turn` (та же позиция)
-5. `player_turn --player_move(stand|double|hit bust/21)--> player_turn` (следующая позиция)
-6. `player_turn --player_move(last playable hand ends)--> dealer_turn`
-7. `player_turn --timeout_turn--> player_turn` или `dealer_turn` в зависимости от следующей игровой позиции
-8. `dealer_turn --play_dealer--> resolving`
-9. `resolving --finalize_round--> closed`
+## Карта переходов
 
-После каждого пользовательского события сервис автоматически дренирует терминальные фазы:
-- Если состояние стало `dealer_turn`, сразу выполняется ход дилера.
-- Если состояние стало `resolving`, сразу выполняется settlement.
+1. `waiting -> dealing` через `start_round`
+2. `dealing -> player_turn` если есть playable игроки
+3. `dealing -> dealer_turn` если playable игроков нет
+4. `player_turn -> player_turn` после `hit`, если ход остается у того же игрока
+5. `player_turn -> player_turn` после завершения руки и перехода к следующему игроку
+6. `player_turn -> dealer_turn` когда playable игроков не осталось
+7. `dealer_turn -> resolving`
+8. `resolving -> closed`
 
-## Guards И Validators
-Основные валидационные хуки:
-- `validate_can_start`: требуются игроки и persisted-статус сессии `lobby_open`.
-- `validate_player_move`: действие должно быть из `hit|stand|double`, активный ход должен совпадать с позицией, рука должна быть игровой.
-- `validate_timeout_request`: только активный игрок и только после истечения таймера.
+## Validators и guards
 
-Основные условия ветвления:
+### Validators
+
+- `validate_can_start`
+- `validate_player_move`
+- `validate_timeout_request`
+
+### Guards
+
 - `has_players_to_act`
 - `keeps_same_turn`
 - `advances_to_next_player`
 - `advances_to_dealer`
 
-## Контракт Доступности Событий
-`available_events()` возвращает список переходов, которые разрешены из текущего состояния state chart.
+## Auto-drain terminal phases
 
-Перед выполнением изменяющих операций сервис проверяет доступность события:
-- `apply_action()` требует доступности `player_move`.
-- `handle_timeout()` требует доступности `timeout_turn`.
+После публичных операций сервис автоматически доигрывает terminal phases:
+- если после действия состояние стало `dealer_turn`, немедленно выполняется ход дилера;
+- если после этого состояние стало `resolving`, немедленно выполняется settlement.
 
-Если событие недоступно, клиент получает validation error с:
-- идентификатором отклоненного события
-- идентификатором текущего состояния
-- списком разрешенных событий
+Это ключевая причина, почему bot API часто возвращает уже финальный snapshot после одного пользовательского действия.
 
-## Действия И Побочные Эффекты
-Callback-и переходов сохраняют все изменения через `BlackjackRepository`:
-- раздача карт
-- назначение хода и таймера
-- применение действия игрока
-- обработка timeout
-- добор карт дилером
-- settlement раунда и обновление балансов игроков
+## Event availability contract
 
-Дополнительно после рефакторинга:
-- `apply_player_move` использует `PlayerActionDispatcher`,
-- dispatcher переводит action-контекст в унифицированный payload для `persist_player_move`,
-- сервис не ветвится вручную по `hit/stand/double`.
+`available_events()` показывает, какие события допустимы из текущего runtime state. Перед `apply_action()` и `handle_timeout()` сервис проверяет доступность события и отклоняет невозможные переходы до записи в БД.
 
-Все callback-и выполняются в границах одной транзакции на одну публичную операцию:
-- при успехе: commit
-- при ошибке: rollback
+## Таймерная семантика
 
-## Журнал Состояний (`states` table)
-Типичные значения `action`, которые пишет repository:
+- `current_timer` назначается при старте хода active позиции;
+- timeout допустим только если таймер реально истек;
+- timeout не shortcut-ит state machine, а использует ее обычный переход `timeout_turn`.
+
+## Audit trail
+
+Repository пишет в `states` такие action values, как:
 - `deal`
-- `deal_dealer`
 - `turn_started`
 - `hit`
 - `stand`
@@ -118,11 +96,3 @@ Callback-и переходов сохраняют все изменения че
 - `dealer_stand`
 - `result`
 - `session_closed`
-
-Каждая строка включает `position`, `action`, временную метку и опциональный JSON-пейлоад `details`.
-
-`details` формируется в dispatch/persistence слое и может содержать:
-- `actor`,
-- `card`,
-- `next_position`,
-- `new_bet`.

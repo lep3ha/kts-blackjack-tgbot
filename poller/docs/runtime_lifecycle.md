@@ -2,38 +2,38 @@
 
 ## Startup
 
-1. Загружается конфигурация (`Settings`).
-2. Инициализируются `TelegramPollingClient`, `OffsetStore`, `UpdateSink`.
-3. Создается `PollingRunner`.
-4. Инициализируются внешние ресурсы (Kafka producer).
+1. Загружаются `Settings`.
+2. Создаются `TelegramPollingClient`, `OffsetStore`, `UpdateSink`.
+3. Инициализируется `PollingRunner`.
+4. Поднимаются внешние ресурсы, в том числе Kafka producer.
+5. Загружается последний сохраненный offset.
 
 ## Main loop
 
-1. `PollingRunner` читает текущий offset.
-2. Запускает ingress queue, dispatcher и worker tasks.
-3. Выполняет `getUpdates` с текущим offset.
-4. Каждое событие кладет в ingress queue как `QueuedUpdate`.
-5. Dispatcher маршрутизирует события по worker partition.
-6. Worker публикует событие в sink.
-7. После успешной публикации commit tracker вычисляет contiguous offset.
-8. Committable offset сохраняется в `OffsetStore`.
+1. Producer делает `getUpdates(offset=last_confirmed_offset)`.
+2. Каждый update получает локальный `sequence_number` и попадает в ingress queue.
+3. Dispatcher раскладывает update по worker queues через partitioning strategy.
+4. Worker публикует envelope в sink.
+5. После успешной публикации worker отмечает sequence в `OffsetCommitTracker`.
+6. Когда tracker видит непрерывный префикс завершенных sequence, новый offset сохраняется в `OffsetStore`.
 
-## Ошибки и retry
+## Error handling
 
-- `RetryableTelegramError` -> экспоненциальный backoff по retry policy.
-- `FatalTelegramError` -> остановка run-loop.
-- Ошибки sink в worker -> offset не подтверждается для проблемного update.
+- `RetryableTelegramError` -> backoff и повторный polling.
+- `FatalTelegramError` -> остановка runtime.
+- ошибка sink/worker -> offset для проблемного update не подтверждается.
+- ошибка мониторинга/runtime task -> fail-fast shutdown, чтобы не продолжать работу в полуразрушенном состоянии.
 
 ## Shutdown
 
-1. Закрывается ingress queue.
-2. Выполняется drain ingress queue.
-3. Выполняется drain worker queues.
-4. Отменяются runtime monitor tasks.
-5. Закрываются ресурсы (`KafkaUpdateSink.close()`).
+1. Producer прекращает прием новых update.
+2. Закрывается ingress queue.
+3. Dispatcher дренирует уже принятые update в worker queues.
+4. Worker pool завершает отправку накопленных элементов.
+5. Закрываются monitoring tasks и ресурсы sink.
 
-## Инварианты
+## Гарантии
 
-- offset не должен сохраняться до подтвержденной downstream-доставки
-- порядок подтверждения offset должен быть contiguous
-- при частичной обработке в параллельных worker нельзя подтверждать «дырявые» sequence
+1. At-least-once delivery.
+2. Нет преждевременного offset commit поверх необработанных сообщений.
+3. Graceful shutdown не теряет уже принятые update, если процесс доходит до нормального завершения.

@@ -1,70 +1,56 @@
 # Poller Entities And Contracts
 
-## Основные сущности
+## `Telegram update`
 
-## 1. Telegram update
+Сырой объект Telegram Bot API. Используется как источник для envelope и для вычисления `next_offset = update_id + 1`.
 
-Сырой объект от Telegram Bot API.
+## `QueuedUpdate`
+
+Runtime-объект между producer, dispatcher и worker pool.
 
 Ключевые поля:
+- `sequence_number`
+- `update`
+- `next_offset`
+
+`sequence_number` нужен потому, что worker processing может быть параллельным, а offset commit должен оставаться contiguous.
+
+## `TelegramUpdateEnvelope`
+
+Kafka contract из `app/downstream/contracts.py`.
+
+Поля:
+- `schema_version`
+- `event_name`
 - `update_id`
-- один из top-level payload ключей (`message`, `callback_query`, ...)
+- `update_type`
+- `source_key`
+- `partition_key`
+- `next_offset`
+- `received_at`
+- `payload`
 
-Используется как источник для envelope и расчета offset.
+## `OffsetStore`
 
-## 2. QueuedUpdate (`app/runtime/intake_queue.py`)
+Абстракция чтения/записи подтвержденного offset.
 
-Внутренняя runtime-сущность очередей.
+Основная реализация — `FileOffsetStore`, который:
+- читает JSON offset state;
+- сохраняет файл атомарно через временный файл и replace.
 
-Поля:
-- `sequence_number` — локальная последовательность для commit tracker
-- `update` — сырой update
-- `next_offset` — ожидаемый offset после обработки
+## `UpdateSink`
 
-Нужна, чтобы отслеживать порядок ack независимо от параллельной обработки.
+Интерфейс downstream доставки update. Основная реализация — `KafkaUpdateSink`.
 
-## 3. TelegramUpdateEnvelope (`app/downstream/contracts.py`)
+## `OffsetCommitTracker`
 
-Контракт сообщения для Kafka.
+Хранит отмеченные как обработанные sequence numbers и выдает только максимальный непрерывный committable offset.
 
-Поля:
-- `update_id: int`
-- `update_type: str`
-- `source_key: str`
-- `partition_key: str`
-- `next_offset: int`
-- `received_at: datetime`
-- `payload: dict`
+Пример:
+- обработаны sequence `1`, `2`, `5`
+- `3` и `4` еще не подтверждены
+- commit возможен только до offset, связанного с `2`
 
-## 4. OffsetStore (`app/storage/offset_store.py`)
+## `QueueBackpressureMonitor`
 
-Абстракция хранения offset.
-
-Операции:
-- `load_offset()`
-- `save_offset(offset)`
-
-Базовая реализация: `FileOffsetStore`.
-
-## 5. UpdateSink (`app/downstream/sink.py`)
-
-Downstream-абстракция доставки update.
-
-Операция:
-- `handle(update)`
-
-Базовая реализация: `KafkaUpdateSink`.
-
-## 6. OffsetCommitTracker (`app/runtime/ack_tracker.py`)
-
-Служебная сущность для contiguous commit:
-- помечает обработанные sequence
-- возвращает максимальный непрерывный committable offset
-
-## 7. QueueBackpressureMonitor (`app/runtime/backpressure.py`)
-
-Метрики и контроль заполненности очередей ingress/worker.
-
-## Поток сущностей
-
-`Telegram update` -> `QueuedUpdate` -> `TelegramUpdateEnvelope` -> `Kafka topic`
+Следит за заполнением ingress и worker queues и помогает не потерять контроль над нагрузкой.

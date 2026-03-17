@@ -3,8 +3,8 @@ from datetime import datetime
 
 import pytest
 
-import app.accessors.bot_accessor as bot_module
-from app.accessors.bot_accessor import BotGameAccessor
+import app.accessors.bot.group as bot_group_module
+from app.accessors.bot import BotGameAccessor
 from app.models import ChatMode, ParticipantStatus, SessionStatus
 from app.schemas import GroupPlayerStopRequest
 from app.domain.blackjack.context import PlayerSlotSnapshot
@@ -136,11 +136,11 @@ def test_group_player_stop_outside_own_turn_does_not_reassign_turn(monkeypatch):
         assert session_id == 123
         return machine
 
-    monkeypatch.setattr(bot_module, "get_db", fake_get_db)
+    monkeypatch.setattr(BotGameAccessor, "_iter_db", lambda self: fake_get_db())
     monkeypatch.setattr(BotGameAccessor, "_get_unfinished_session_by_chat_id", fake_get_unfinished_session_by_chat_id)
     monkeypatch.setattr(BotGameAccessor, "_get_machine_player_by_telegram_id", fake_get_machine_player_by_telegram_id)
     monkeypatch.setattr(BotGameAccessor, "_build_session_snapshot", fake_build_session_snapshot)
-    monkeypatch.setattr(bot_module.BlackjackService, "load", staticmethod(fake_load))
+    monkeypatch.setattr(bot_group_module.BlackjackService, "load", staticmethod(fake_load))
 
     payload = GroupPlayerStopRequest(chat_id="chat-1", chat_type="group", actor_telegram_id="tg-1")
 
@@ -218,12 +218,12 @@ def test_group_player_stop_in_own_turn_reassigns_next_timer(monkeypatch):
     async def fake_load(db, session_id, *, turn_timeout_seconds=30, for_update=True):
         return machine
 
-    monkeypatch.setattr(bot_module, "get_db", fake_get_db)
-    monkeypatch.setattr(bot_module, "utc_now_naive", lambda: fixed_now)
+    monkeypatch.setattr(BotGameAccessor, "_iter_db", lambda self: fake_get_db())
+    monkeypatch.setattr(BotGameAccessor, "_utc_now_naive", lambda self: fixed_now)
     monkeypatch.setattr(BotGameAccessor, "_get_unfinished_session_by_chat_id", fake_get_unfinished_session_by_chat_id)
     monkeypatch.setattr(BotGameAccessor, "_get_machine_player_by_telegram_id", fake_get_machine_player_by_telegram_id)
     monkeypatch.setattr(BotGameAccessor, "_build_session_snapshot", fake_build_session_snapshot)
-    monkeypatch.setattr(bot_module.BlackjackService, "load", staticmethod(fake_load))
+    monkeypatch.setattr(bot_group_module.BlackjackService, "load", staticmethod(fake_load))
 
     payload = GroupPlayerStopRequest(chat_id="chat-1", chat_type="group", actor_telegram_id="tg-1")
 

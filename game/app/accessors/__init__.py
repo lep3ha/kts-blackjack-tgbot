@@ -4,7 +4,7 @@ from aiohttp import web
 from app.core.config import Settings, settings
 
 from app.accessors.blackjack_accessor import BlackjackAccessor
-from app.accessors.bot_accessor import BotGameAccessor
+from app.accessors.bot import BotGameAccessor
 from app.accessors.catalog_accessor import CatalogAccessor
 
 catalog_accessor_key = web.AppKey("catalog_accessor", CatalogAccessor)

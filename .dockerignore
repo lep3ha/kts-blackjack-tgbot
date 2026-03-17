@@ -5,6 +5,7 @@
 **/.pytest_cache/
 **/*.pyc
 **/.env
-game/
+game/docs/
+game/notes/
 poller/docs/
-router/docs/
+orchestrator/docs/

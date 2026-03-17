@@ -24,13 +24,27 @@ RUN mkdir -p /opt/service/var/state
 
 CMD ["python", "run.py"]
 
-FROM base AS router-runtime
+FROM base AS orchestrator-runtime
 
-COPY router/requirements.txt ./requirements.txt
+COPY orchestrator/requirements.txt ./requirements.txt
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY router/app ./app
-COPY router/run.py ./run.py
+COPY orchestrator/app ./app
+COPY orchestrator/run.py ./run.py
+
+CMD ["python", "run.py"]
+
+FROM base AS game-runtime
+
+COPY game/requirements.txt ./requirements.txt
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY game/alembic.ini game/run.py ./
+COPY game/alembic ./alembic
+COPY game/app ./app
+
+EXPOSE 8001
 
 CMD ["python", "run.py"]

@@ -2,8 +2,7 @@ import asyncio
 
 import pytest
 
-import app.accessors.bot_accessor as bot_module
-from app.accessors.bot_accessor import BotGameAccessor
+from app.accessors.bot import BotGameAccessor
 from app.errors import BadRequestError, StateConflictError
 from app.models import ChatMode, SessionStatus
 from app.schemas import GroupLobbyStartRequest
@@ -38,7 +37,7 @@ def test_start_group_lobby_empty_participants_is_state_conflict(monkeypatch):
     async def fake_get_session_participants(self, db, session_id):
         return []
 
-    monkeypatch.setattr(bot_module, "get_db", fake_get_db)
+    monkeypatch.setattr(BotGameAccessor, "_iter_db", lambda self: fake_get_db())
     monkeypatch.setattr(BotGameAccessor, "_get_unfinished_session_by_chat_id", fake_get_unfinished_session_by_chat_id)
     monkeypatch.setattr(BotGameAccessor, "_get_session_participants", fake_get_session_participants)
 
