@@ -53,6 +53,7 @@ class OrchestratorApp:
             {"command": "create_lobby", "description": "Открыть лобби, аргумент: <bet>"},
             {"command": "group_start", "description": "Запустить уже открытое лобби"},
             {"command": "join", "description": "Войти в лобби, аргумент: <bet>"},
+            {"command": "balance", "description": "Показать текущий баланс"},
             {"command": "current", "description": "Показать текущее состояние"},
             {"command": "stop", "description": "Single: стоп, group: выйти из раунда"},
             {"command": "admin_topup", "description": "Пополнить баланс: <username> <amount>"},
@@ -91,6 +92,7 @@ def create_app(settings: Settings) -> OrchestratorApp:
     dispatcher.register("single_start", handlers.handle_single_start)
     dispatcher.register("single_stop", handlers.handle_single_stop)
     dispatcher.register("player_register", handlers.handle_player_register)
+    dispatcher.register("player_balance", handlers.handle_player_balance)
     dispatcher.register("player_action", handlers.handle_player_action)
     dispatcher.register("current_session", handlers.handle_current_session)
     dispatcher.register("admin_topup", handlers.handle_admin_topup)

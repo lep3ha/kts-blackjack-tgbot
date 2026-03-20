@@ -16,6 +16,7 @@ class TestBlackjackApi(AioHTTPTestCase):
 
         self.catalog_accessor = SimpleNamespace(
             create_player=AsyncMock(),
+            get_player_by_telegram_id=AsyncMock(),
             create_deck=AsyncMock(),
             create_session=AsyncMock(),
             seat_player=AsyncMock(),
@@ -56,7 +57,7 @@ class TestBlackjackApi(AioHTTPTestCase):
         assert data["error"]["code"] == "bad_request"
 
     async def test_action_with_invalid_payload(self):
-        payload = {"position": 1, "action": "split"}
+        payload = {"position": 1, "action": "surrender"}
         resp = await self.client.request("PUT", "/sessions/1/actions", json=payload)
         data = await resp.json()
         assert resp.status == 400
@@ -95,6 +96,24 @@ class TestBlackjackApi(AioHTTPTestCase):
         assert data["data"]["available_moves"] == ["hit", "stand"]
         assert data["data"]["players"][0]["player_id"] == 100
         self.blackjack_accessor.make_action.assert_awaited_once()
+
+    async def test_get_player_by_telegram_happy_path(self):
+        self.catalog_accessor.get_player_by_telegram_id.return_value = {
+            "id": 10,
+            "telegram_id": "tg-1",
+            "username": "alice",
+            "first_name": "Alice",
+            "bank": 1500,
+        }
+
+        resp = await self.client.request("GET", "/players/telegram/tg-1")
+
+        data = await resp.json()
+        assert resp.status == 200
+        assert data["success"] is True
+        assert data["data"]["telegram_id"] == "tg-1"
+        assert data["data"]["bank"] == 1500
+        self.catalog_accessor.get_player_by_telegram_id.assert_awaited_once_with("tg-1")
 
     async def test_group_open_happy_path(self):
         self.bot_accessor.open_group_lobby.return_value = {

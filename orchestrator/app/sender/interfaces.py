@@ -1,5 +1,6 @@
 from typing import Protocol
 
+from app.sender.models import ParseMode
 from app.sender.models import UiKeyboard
 
 
@@ -10,6 +11,7 @@ class SenderService(Protocol):
         chat_id: str,
         text: str,
         keyboard: UiKeyboard | None = None,
+        parse_mode: ParseMode | None = None,
     ) -> int | None:
         """Send a message to Telegram chat. Returns Telegram message_id or None."""
 

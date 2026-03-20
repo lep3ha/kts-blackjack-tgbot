@@ -22,6 +22,7 @@ class PlayerSlotSnapshot:
     participant_status: ParticipantStatus = ParticipantStatus.active
     cards: list[str] = field(default_factory=list)
     bank: int = 0
+    insurance_bet: int = 0
 
 
 @dataclass(slots=True)
@@ -34,6 +35,7 @@ class BlackjackSessionContext:
     turn_version: int = 0
     dealer_cards: list[str] = field(default_factory=list)
     current_position: Optional[int] = None
+    current_hand_index: Optional[int] = None
     current_timer: Optional[datetime] = None
     count_players: int = 0
     players: list[PlayerSlotSnapshot] = field(default_factory=list)

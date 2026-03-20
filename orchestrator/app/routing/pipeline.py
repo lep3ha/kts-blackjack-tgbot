@@ -49,13 +49,21 @@ class OrchestratorPipeline:
 
         await self._cancel_timeout_if_needed(command=command, result=result, context=context)
 
-        await self._delete_previous_message_if_needed(command=command, result=result)
+        await self._delete_previous_message_if_needed(command=command, result=result, context=context)
 
-        outbound = present_orchestrator_result(command.chat_id, result)
+        outbound = present_orchestrator_result(
+            command.chat_id,
+            result,
+            chat_type=command.chat_type,
+            target_username=command.actor_username,
+            target_telegram_id=command.actor_telegram_id,
+            target_first_name=command.actor_first_name,
+        )
         message_id = await self._sender.send_text(
             chat_id=outbound.chat_id,
             text=outbound.text,
             keyboard=outbound.keyboard,
+            parse_mode=outbound.parse_mode,
         )
 
         if message_id is not None:
@@ -72,20 +80,23 @@ class OrchestratorPipeline:
         *,
         command: OrchestratorCommand,
         result: OrchestratorResult,
+        context: SessionContext | None,
     ) -> None:
-        if command.command_type != "player_action" or not result.success:
-            return
-
-        if self._session_context_store is None:
+        if command.command_type not in {"player_action", "current_session"} or not result.success:
             return
 
         try:
-            context = await self._session_context_store.get(command.chat_id)
+            if context is None and self._session_context_store is not None:
+                context = await self._session_context_store.get(command.chat_id)
+
             if context is None or context.last_bot_message_id is None:
                 return
 
-            # Delete previous game-state message only for the current player's successful move.
-            if context.current_player_telegram_id is not None and command.actor_telegram_id != context.current_player_telegram_id:
+            if (
+                command.command_type == "player_action"
+                and context.current_player_telegram_id is not None
+                and command.actor_telegram_id != context.current_player_telegram_id
+            ):
                 return
 
             await self._sender.delete_message(
@@ -123,9 +134,47 @@ class OrchestratorPipeline:
                 context = SessionContext(chat_id=command.chat_id, chat_type=command.chat_type)
             context.last_bot_message_id = message_id
             context.reply_action_hint = self._resolve_reply_action_hint(command=command, result=result)
+            self._sync_runtime_context(context=context, result=result)
             await self._session_context_store.set(command.chat_id, context, self._context_ttl_seconds)
         except Exception:
             logger.debug("Failed to save message_id chat_id=%s", command.chat_id)
+
+    @staticmethod
+    def _sync_runtime_context(*, context: SessionContext, result: OrchestratorResult) -> None:
+        if not result.success or not isinstance(result.data, dict):
+            return
+
+        data = result.data
+
+        session_id = data.get("session_id")
+        if isinstance(session_id, int):
+            context.session_id = session_id
+
+        turn_version = data.get("turn_version")
+        if isinstance(turn_version, int):
+            context.turn_version = turn_version
+
+        current_player = data.get("current_player")
+        if isinstance(current_player, dict):
+            player_id = current_player.get("telegram_id")
+            if player_id is not None:
+                context.current_player_telegram_id = str(player_id)
+
+        current_hand_index = data.get("current_hand_index")
+        if not isinstance(current_hand_index, int) and isinstance(current_player, dict):
+            current_player_hand_index = current_player.get("hand_index")
+            if isinstance(current_player_hand_index, int):
+                current_hand_index = current_player_hand_index
+        if isinstance(current_hand_index, int):
+            context.current_hand_index = current_hand_index
+
+        current_timer = data.get("current_timer")
+        if current_timer is not None:
+            context.current_timer = str(current_timer)
+
+        available_moves = data.get("available_moves")
+        if isinstance(available_moves, list):
+            context.available_moves = [str(move) for move in available_moves]
 
     @staticmethod
     def _resolve_reply_action_hint(
@@ -184,10 +233,19 @@ class OrchestratorPipeline:
         current_timer = result.data.get("current_timer")
         session_id = result.data.get("session_id")
         turn_version = result.data.get("turn_version")
+        current_hand_index = result.data.get("current_hand_index")
+        if current_hand_index is None:
+            current_player = result.data.get("current_player")
+            if isinstance(current_player, dict):
+                current_player_hand_index = current_player.get("hand_index")
+                if isinstance(current_player_hand_index, int):
+                    current_hand_index = current_player_hand_index
         if current_timer is None:
             return
         if not isinstance(session_id, int) or not isinstance(turn_version, int):
             return
+        if current_hand_index is not None and not isinstance(current_hand_index, int):
+            current_hand_index = None
 
         due_at = _parse_due_at(str(current_timer))
         if due_at is None:
@@ -200,6 +258,7 @@ class OrchestratorPipeline:
             chat_type=chat_type,
             session_id=session_id,
             turn_version=turn_version,
+            hand_index=current_hand_index,
             due_at=due_at,
         )
 

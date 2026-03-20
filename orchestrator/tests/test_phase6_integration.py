@@ -153,6 +153,31 @@ class TestSinglePlayerWorkflow:
         assert "testuser" in msg.text
         assert "(+250)" in msg.text  # Delta shown in parentheses
 
+    def test_game_over_displays_per_hand_breakdown_when_present(self):
+        """Game over result includes split-hand settlements when provided by game snapshot."""
+        data = {
+            "chat_mode": "single",
+            "dealer": {"cards": ["10♠", "7♥"]},
+            "participants": [
+                {
+                    "telegram_id": 999,
+                    "username": "testuser",
+                    "result": "mixed",
+                    "delta": 0,
+                    "hand_settlements": [
+                        {"hand_index": 0, "result": "win", "delta": 100},
+                        {"hand_index": 1, "result": "lose", "delta": -100},
+                    ],
+                }
+            ],
+        }
+        result = _make_success_result("single_stop", data)
+
+        msg = present_orchestrator_result("123", result)
+
+        assert "Рука 1: win (+100)" in msg.text
+        assert "Рука 2: lose (-100)" in msg.text
+
     def test_current_session_shows_game_state(self):
         """User sends /current → shows current game state with timer."""
         data = {
@@ -301,36 +326,48 @@ class TestButtonRouting:
     def test_reply_keyboard_hit_button_routable(self):
         """Hit button text routes to player_action hit."""
         normalizer = TelegramUpdateNormalizer()
-        
-        # Legacy Russian button still works
+
+        # Russian action aliases are intentionally unsupported.
         cmd1 = normalizer.normalize(_make_message_envelope("Ещё"))
-        assert cmd1.command_type == "player_action"
-        assert cmd1.action == "hit"
-        
+        assert cmd1.command_type == "unsupported"
+
         # New English button works
         cmd2 = normalizer.normalize(_make_message_envelope("Hit"))
         assert cmd2.command_type == "player_action"
         assert cmd2.action == "hit"
 
     def test_reply_keyboard_stand_button_routable(self):
-        """Stand button (Russian or English) routes to player_action stand."""
+        """Stand button uses EN-only action text mapping."""
         normalizer = TelegramUpdateNormalizer()
-        
+
         cmd1 = normalizer.normalize(_make_message_envelope("Стоп"))
-        assert cmd1.action == "stand"
-        
+        assert cmd1.command_type == "unsupported"
+
         cmd2 = normalizer.normalize(_make_message_envelope("Stand"))
+        assert cmd2.command_type == "player_action"
         assert cmd2.action == "stand"
 
     def test_reply_keyboard_double_button_routable(self):
-        """Double button (Russian or English) routes to player_action double."""
+        """Double button uses EN-only action text mapping."""
         normalizer = TelegramUpdateNormalizer()
-        
+
         cmd1 = normalizer.normalize(_make_message_envelope("Двойная"))
-        assert cmd1.action == "double"
-        
+        assert cmd1.command_type == "unsupported"
+
         cmd2 = normalizer.normalize(_make_message_envelope("Double"))
+        assert cmd2.command_type == "player_action"
         assert cmd2.action == "double"
+
+    def test_reply_keyboard_split_button_routable(self):
+        """Split button uses EN-only action text mapping."""
+        normalizer = TelegramUpdateNormalizer()
+
+        cmd1 = normalizer.normalize(_make_message_envelope("Сплит"))
+        assert cmd1.command_type == "unsupported"
+
+        cmd2 = normalizer.normalize(_make_message_envelope("Split"))
+        assert cmd2.command_type == "player_action"
+        assert cmd2.action == "split"
 
     def test_inline_keyboard_action_roundtrips(self):
         """Inline button callback action:move:tv:N routes correctly."""

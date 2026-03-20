@@ -5,6 +5,7 @@ from typing import Literal
 
 ButtonStyle = Literal["primary", "secondary", "danger"]
 KeyboardKind = Literal["reply", "inline"]
+ParseMode = Literal["HTML"]
 
 
 @dataclass(slots=True)
@@ -26,3 +27,4 @@ class OutboundMessage:
     chat_id: str
     text: str
     keyboard: UiKeyboard | None = None
+    parse_mode: ParseMode | None = None

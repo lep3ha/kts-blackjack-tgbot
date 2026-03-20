@@ -32,7 +32,8 @@ class SeatCreateRequest(BaseModel):
 
 class ActionRequest(BaseModel):
     position: int = Field(ge=1, le=8)
-    action: str = Field(pattern="^(hit|stand|double)$")
+    action: str = Field(pattern="^(hit|stand|double|split|insurance)$")
+    hand_index: Optional[int] = Field(default=None, ge=0)
 
 
 class TimeoutRequest(BaseModel):
@@ -54,6 +55,7 @@ class SessionStateResponse(BaseModel):
     state: str
     available_moves: list[str] = Field(default_factory=list)
     current_position: Optional[int]
+    current_hand_index: Optional[int] = None
     current_timer: Optional[datetime]
     dealer_cards: list[str]
     players: list[PlayerStateResponse]

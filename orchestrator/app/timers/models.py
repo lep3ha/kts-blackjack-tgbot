@@ -9,6 +9,7 @@ class TimeoutTask:
     session_id: int
     turn_version: int
     due_at: datetime
+    hand_index: int | None = None
 
     @property
     def timer_id(self) -> str:

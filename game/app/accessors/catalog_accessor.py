@@ -37,6 +37,22 @@ class CatalogAccessor:
             }
         raise RuntimeError("Database session is unavailable")
 
+    async def get_player_by_telegram_id(self, telegram_id: str) -> dict:
+        async for db in get_db():
+            result = await db.execute(select(Player).where(Player.telegram_id == telegram_id))
+            player = result.scalar_one_or_none()
+            if player is None:
+                raise NotFoundError("Player not found")
+
+            return {
+                "id": player.id,
+                "telegram_id": player.telegram_id,
+                "username": player.username,
+                "first_name": player.first_name,
+                "bank": player.bank,
+            }
+        raise RuntimeError("Database session is unavailable")
+
     async def create_deck(self, payload: DeckCreateRequest) -> dict:
         async for db in get_db():
             deck = Deck(chat_id=payload.chat_id, meta=payload.meta)

@@ -42,6 +42,33 @@ class PlayerTurnRules:
             if seat.bank < seat.bet * 2:
                 raise GameLogicError("Insufficient funds to double")
 
+        if action == "split":
+            if len(seat.cards) != 2:
+                raise GameLogicError("Split is allowed only on the first two cards")
+            if self._card_rank(seat.cards[0]) != self._card_rank(seat.cards[1]):
+                raise GameLogicError("Split is allowed only for equal card ranks")
+            if seat.bank < seat.bet * 2:
+                raise GameLogicError("Insufficient funds to split")
+
+        if action == "insurance":
+            if len(seat.cards) != 2:
+                raise GameLogicError("Insurance is allowed only before the first action")
+            if seat.insurance_bet > 0:
+                raise GameLogicError("Insurance can be purchased only once per player")
+            if not model.dealer_cards:
+                raise StateConflictError("Dealer cards are not available")
+            if self._card_rank(model.dealer_cards[0]) != "A":
+                raise GameLogicError("Insurance is allowed only when dealer shows Ace")
+
+            insurance_bet = seat.bet // 2
+            if insurance_bet <= 0:
+                raise GameLogicError("Insurance amount must be positive")
+            # Bank is adjusted by insurance immediately, while the base bet is
+            # still resolved later during settlement. Keep enough balance for both.
+            required_bank = seat.bet + insurance_bet
+            if seat.bank < required_bank:
+                raise GameLogicError("Insufficient funds to buy insurance")
+
     def validate_timeout_request(self, model: BlackjackSessionContext, position: int, seat, timer_expired: bool) -> None:
         if seat is None:
             raise NotFoundError("Player not found in session")
@@ -76,7 +103,7 @@ class PlayerTurnRules:
         return None
 
     def keeps_same_turn(self, action: str, projected_score: int) -> bool:
-        return action == "hit" and projected_score < 21
+        return (action == "hit" and projected_score < 21) or action in {"split", "insurance"}
 
     def advances_to_next_player(self, action: str, projected_score: int, next_position: Optional[int]) -> bool:
         if next_position is None:
@@ -91,3 +118,15 @@ class PlayerTurnRules:
         if action == "hit":
             return projected_score >= 21
         return action in {"stand", "double", "timeout"}
+
+    @staticmethod
+    def _card_rank(card: str) -> str:
+        normalized = card.upper()
+        if normalized.startswith("10"):
+            return "10"
+
+        rank = normalized[:1]
+        if rank in {"A", "K", "Q", "J", "T", "2", "3", "4", "5", "6", "7", "8", "9"}:
+            return rank
+
+        raise GameLogicError("Invalid card format for split validation")

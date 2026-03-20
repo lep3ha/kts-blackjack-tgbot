@@ -56,6 +56,7 @@ class RedisTimerWorker:
         chat_type: str,
         session_id: int,
         turn_version: int,
+        hand_index: int | None = None,
         due_at: datetime,
     ) -> None:
         task = TimeoutTask(
@@ -63,6 +64,7 @@ class RedisTimerWorker:
             chat_type=chat_type,
             session_id=session_id,
             turn_version=turn_version,
+            hand_index=hand_index,
             due_at=due_at,
         )
 
@@ -74,6 +76,7 @@ class RedisTimerWorker:
             "chat_type": task.chat_type,
             "session_id": task.session_id,
             "turn_version": task.turn_version,
+            "hand_index": task.hand_index,
             "due_at": task.due_at.astimezone(timezone.utc).isoformat(),
         }
 
@@ -138,6 +141,11 @@ class RedisTimerWorker:
                 chat_type=str(payload.get("chat_type", "group")),
                 session_id=int(payload["session_id"]),
                 turn_version=int(payload["turn_version"]),
+                hand_index=(
+                    int(payload["hand_index"])
+                    if payload.get("hand_index") is not None
+                    else None
+                ),
                 due_at=datetime.fromisoformat(str(payload["due_at"])),
             )
 

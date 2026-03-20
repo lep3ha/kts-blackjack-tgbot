@@ -12,6 +12,7 @@ class TimerScheduler(Protocol):
         chat_type: str,
         session_id: int,
         turn_version: int,
+        hand_index: int | None = None,
         due_at: datetime,
     ) -> None:
         """Schedule a timeout call for a specific turn."""

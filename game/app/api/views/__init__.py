@@ -18,12 +18,13 @@ from app.api.views.bot import (
     SingleSessionStartView,
     SingleSessionStopView,
 )
-from app.api.views.catalog import DecksView, PlayersView, SessionPlayersView, SessionsView
+from app.api.views.catalog import DecksView, PlayerByTelegramView, PlayersView, SessionPlayersView, SessionsView
 from app.api.views.game import SessionActionsView, SessionStartView, SessionStateView, SessionTimeoutView
 
 
 BLACKJACK_VIEW_ROUTES: list[tuple[str, type[web.View]]] = [
     ("/players", PlayersView),
+    ("/players/telegram/{telegram_id}", PlayerByTelegramView),
     ("/decks", DecksView),
     ("/sessions", SessionsView),
     ("/sessions/{session_id}/players", SessionPlayersView),
@@ -61,6 +62,7 @@ __all__ = [
     "BotLastSessionView",
     "BotTimeoutView",
     "DecksView",
+    "PlayerByTelegramView",
     "GroupLobbyJoinView",
     "GroupLobbyOpenView",
     "GroupLobbyStartView",

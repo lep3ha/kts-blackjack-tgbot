@@ -22,6 +22,7 @@ class GameServiceTimeoutExecutor:
                 chat_id=task.chat_id,
                 chat_type=task.chat_type if task.chat_type in {"group", "single"} else "group",
                 turn_version=task.turn_version,
+                hand_index=task.hand_index,
             )
         )
 
@@ -40,13 +41,18 @@ class GameServiceTimeoutExecutor:
                 message="timeout",
                 data={**data, "_timeout": True} if data else {"_timeout": True},
             )
-            outbound = present_orchestrator_result(task.chat_id, result)
+            outbound = present_orchestrator_result(
+                task.chat_id,
+                result,
+                chat_type=task.chat_type,
+            )
             notice = "⏰ Время вышло — ход засчитан как Stand."
             outbound_text = f"{notice}\n\n{outbound.text}"
             await self._sender.send_text(
                 chat_id=task.chat_id,
                 text=outbound_text,
                 keyboard=outbound.keyboard,
+                parse_mode=outbound.parse_mode,
             )
         except Exception:
             logger.exception("Failed to send timeout notification chat_id=%s", task.chat_id)

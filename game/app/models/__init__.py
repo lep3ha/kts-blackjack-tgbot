@@ -9,7 +9,7 @@ This package exposes main entities and enums via stable imports:
 """
 
 from app.models.base import Base
-from app.models.entities import Deck, GameSession, Player, PlayerToSession, State
+from app.models.entities import Deck, GameSession, Player, PlayerHand, PlayerToSession, State
 from app.models.enums import ChatMode, ParticipantStatus, SessionStatus
 
 __all__ = [
@@ -19,6 +19,7 @@ __all__ = [
     "GameSession",
     "ParticipantStatus",
     "Player",
+    "PlayerHand",
     "PlayerToSession",
     "SessionStatus",
     "State",

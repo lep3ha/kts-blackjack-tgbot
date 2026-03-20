@@ -225,6 +225,13 @@ class BaseCommandHandlers:
         turn_version_raw = data.get("turn_version")
         turn_version = turn_version_raw if isinstance(turn_version_raw, int) else None
 
+        current_hand_index_raw = data.get("current_hand_index")
+        current_hand_index = current_hand_index_raw if isinstance(current_hand_index_raw, int) else None
+        if current_hand_index is None and isinstance(current_player, dict):
+            current_player_hand_index = current_player.get("hand_index")
+            if isinstance(current_player_hand_index, int):
+                current_hand_index = current_player_hand_index
+
         current_timer_raw = data.get("current_timer")
         current_timer = str(current_timer_raw) if current_timer_raw is not None else None
 
@@ -233,6 +240,7 @@ class BaseCommandHandlers:
             chat_type=command.chat_type,
             session_id=session_id,
             turn_version=turn_version,
+            current_hand_index=current_hand_index,
             current_timer=current_timer,
             current_player_telegram_id=current_player_telegram_id,
             available_moves=available_moves,

@@ -1,9 +1,11 @@
 """Tests for Phase 3: delete-before / save-after message_id in OrchestratorPipeline."""
 import asyncio
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.routing.normalizer import TelegramUpdateNormalizer
 from app.routing.models import OrchestratorCommand, OrchestratorResult
 from app.routing.pipeline import OrchestratorPipeline
 from app.state.models import SessionContext
@@ -83,15 +85,40 @@ def _make_envelope() -> MagicMock:
     return MagicMock()
 
 
-def _make_envelope_with_chat(chat_id: str = "chat-1") -> MagicMock:
+def _make_envelope_with_chat(chat_id: str = "chat-1", text: str = "Hit") -> MagicMock:
     envelope = MagicMock()
     envelope.update_id = 1
+    envelope.update_type = "message"
     envelope.source_key = chat_id
+    envelope.partition_key = chat_id
+    envelope.next_offset = 2
     envelope.payload = {
         "message": {
             "chat": {"id": chat_id, "type": "private"},
             "from": {"id": "tg-1"},
-            "text": "Hit",
+            "text": text,
+        }
+    }
+    return envelope
+
+
+def _make_callback_envelope_with_chat(chat_id: str = "42", callback_data: str = "action:split:tv:5:hand:1") -> MagicMock:
+    envelope = MagicMock()
+    envelope.update_id = 1
+    envelope.update_type = "callback_query"
+    envelope.source_key = chat_id
+    envelope.partition_key = chat_id
+    envelope.next_offset = 2
+    envelope.payload = {
+        "callback_query": {
+            "id": "cb-1",
+            "from": {"id": "tg-1", "username": "u", "first_name": "F"},
+            "message": {
+                "message_id": 10,
+                "chat": {"id": chat_id, "type": "private"},
+                "text": "state",
+            },
+            "data": callback_data,
         }
     }
     return envelope
@@ -193,6 +220,90 @@ def test_group_lobby_result_saves_group_start_hint():
     assert saved_context.reply_action_hint == "group_start"
 
 
+def test_group_open_inline_keyboard_is_not_reply_targeted_with_username():
+    normalizer = MagicMock()
+    normalizer.normalize.return_value = OrchestratorCommand(
+        update_id=1,
+        chat_id="chat-1",
+        chat_type="group",
+        actor_telegram_id="tg-1",
+        actor_username="alice",
+        actor_first_name=None,
+        command_type="group_open",
+    )
+
+    processor = AsyncMock()
+    processor.process.return_value = OrchestratorResult(
+        success=True,
+        command_type="group_open",
+        message="ok",
+        data={"session_status": "lobby_open", "chat_mode": "group", "bet": 100},
+    )
+
+    sender = AsyncMock()
+    sender.send_text.return_value = 88
+    context_store = AsyncMock()
+    context_store.get.return_value = SessionContext(chat_id="chat-1", chat_type="group")
+
+    pipeline = OrchestratorPipeline(
+        normalizer=normalizer,
+        processor=processor,
+        sender=sender,
+        timer_scheduler=AsyncMock(),
+        session_context_store=context_store,
+        context_ttl_seconds=600,
+    )
+
+    asyncio.run(pipeline.process_envelope(_make_envelope()))
+
+    send_kwargs = sender.send_text.call_args.kwargs
+    assert not send_kwargs["text"].startswith("@alice ")
+    assert send_kwargs["keyboard"].kind == "inline"
+    assert send_kwargs["parse_mode"] is None
+
+
+def test_group_open_inline_keyboard_is_not_reply_targeted_with_html_mention():
+    normalizer = MagicMock()
+    normalizer.normalize.return_value = OrchestratorCommand(
+        update_id=1,
+        chat_id="chat-1",
+        chat_type="group",
+        actor_telegram_id="123456",
+        actor_username=None,
+        actor_first_name="Alice & Bob",
+        command_type="group_open",
+    )
+
+    processor = AsyncMock()
+    processor.process.return_value = OrchestratorResult(
+        success=True,
+        command_type="group_open",
+        message="ok",
+        data={"session_status": "lobby_open", "chat_mode": "group", "bet": 100},
+    )
+
+    sender = AsyncMock()
+    sender.send_text.return_value = 88
+    context_store = AsyncMock()
+    context_store.get.return_value = SessionContext(chat_id="chat-1", chat_type="group")
+
+    pipeline = OrchestratorPipeline(
+        normalizer=normalizer,
+        processor=processor,
+        sender=sender,
+        timer_scheduler=AsyncMock(),
+        session_context_store=context_store,
+        context_ttl_seconds=600,
+    )
+
+    asyncio.run(pipeline.process_envelope(_make_envelope()))
+
+    send_kwargs = sender.send_text.call_args.kwargs
+    assert send_kwargs["parse_mode"] is None
+    assert not send_kwargs["text"].startswith('<a href="tg://user?id=123456">Alice &amp; Bob</a> ')
+    assert send_kwargs["keyboard"].kind == "inline"
+
+
 def test_no_save_when_send_returns_none():
     context = _make_context()
     pipeline, sender, context_store, _ = _make_pipeline(context=context, send_returns=None)
@@ -245,6 +356,15 @@ def test_delete_called_before_send_on_player_action():
 def test_delete_called_with_correct_message_id():
     context = _make_context(last_bot_message_id=123)
     pipeline, sender, _, _ = _make_pipeline(context=context, command_type="player_action")
+
+    asyncio.run(pipeline.process_envelope(_make_envelope()))
+
+    sender.delete_message.assert_awaited_once_with(chat_id="chat-1", message_id=123)
+
+
+def test_delete_called_on_current_session():
+    context = _make_context(last_bot_message_id=123)
+    pipeline, sender, _, _ = _make_pipeline(context=context, command_type="current_session")
 
     asyncio.run(pipeline.process_envelope(_make_envelope()))
 
@@ -523,6 +643,55 @@ def test_cancel_timeout_failure_does_not_crash_pipeline():
     sender.send_text.assert_awaited_once()
 
 
+def test_schedule_timeout_includes_split_hand_index_from_snapshot():
+    normalizer = MagicMock()
+    normalizer.normalize.return_value = _make_command("player_action")
+
+    due_at = (datetime.now(timezone.utc) + timedelta(seconds=45)).replace(microsecond=0)
+    processor = AsyncMock()
+    processor.process.return_value = OrchestratorResult(
+        success=True,
+        command_type="player_action",
+        message="ok",
+        data={
+            "chat_mode": "single",
+            "session_id": 42,
+            "turn_version": 8,
+            "current_hand_index": 1,
+            "current_timer": due_at.isoformat(),
+        },
+    )
+
+    sender = AsyncMock()
+    sender.send_text.return_value = 77
+
+    timer_scheduler = AsyncMock()
+
+    context_store = AsyncMock()
+    context_store.get.return_value = _make_context(last_bot_message_id=11)
+    context_store.set.return_value = None
+
+    pipeline = OrchestratorPipeline(
+        normalizer=normalizer,
+        processor=processor,
+        sender=sender,
+        timer_scheduler=timer_scheduler,
+        session_context_store=context_store,
+        context_ttl_seconds=600,
+    )
+
+    asyncio.run(pipeline.process_envelope(_make_envelope_with_chat()))
+
+    timer_scheduler.schedule_timeout.assert_awaited_once_with(
+        chat_id="chat-1",
+        chat_type="single",
+        session_id=42,
+        turn_version=8,
+        hand_index=1,
+        due_at=due_at,
+    )
+
+
 # ---------------------------------------------------------------------------
 # SessionContext: last_bot_message_id field
 # ---------------------------------------------------------------------------
@@ -551,3 +720,331 @@ def test_session_context_old_payload_without_field_still_valid():
     })
     ctx = SessionContext.model_validate_json(old_payload)
     assert ctx.last_bot_message_id is None
+
+
+# ---------------------------------------------------------------------------
+# Split flow end-to-end through pipeline (normalize -> render -> send)
+# ---------------------------------------------------------------------------
+
+
+def test_split_callback_pipeline_renders_per_hand_breakdown_and_saves_context():
+    normalizer = TelegramUpdateNormalizer()
+    processor = AsyncMock()
+    processor.process.return_value = OrchestratorResult(
+        success=True,
+        command_type="player_action",
+        message="ok",
+        data={
+            "chat_mode": "single",
+            "session_id": 42,
+            "session_status": "closed",
+            "runtime_state": "closed",
+            "turn_version": 6,
+            "dealer": {"cards": ["10S", "7H"], "is_final": True, "is_revealed": True},
+            "participants": [
+                {
+                    "telegram_id": "tg-1",
+                    "username": "alice",
+                    "result": "mixed",
+                    "delta": 0,
+                    "hand_settlements": [
+                        {"hand_index": 0, "result": "win", "delta": 100},
+                        {"hand_index": 1, "result": "lose", "delta": -100},
+                    ],
+                }
+            ],
+            "available_moves": [],
+            "current_timer": None,
+        },
+    )
+
+    sender = AsyncMock()
+    sender.send_text.return_value = 501
+
+    context_store = AsyncMock()
+    context_store.get.return_value = SessionContext(chat_id="42", chat_type="single", session_id=42)
+    context_store.set.return_value = None
+
+    timer_scheduler = AsyncMock()
+
+    pipeline = OrchestratorPipeline(
+        normalizer=normalizer,
+        processor=processor,
+        sender=sender,
+        timer_scheduler=timer_scheduler,
+        session_context_store=context_store,
+        context_ttl_seconds=600,
+    )
+
+    asyncio.run(pipeline.process_envelope(_make_callback_envelope_with_chat()))
+
+    sent_text = sender.send_text.await_args.kwargs["text"]
+    assert "Рука 1: win (+100)" in sent_text
+    assert "Рука 2: lose (-100)" in sent_text
+
+    dispatched_command = processor.process.await_args.args[0]
+    assert dispatched_command.command_type == "player_action"
+    assert dispatched_command.action == "split"
+    assert dispatched_command.turn_version == 5
+    assert dispatched_command.hand_index == 1
+
+    saved_context: SessionContext = context_store.set.call_args[0][1]
+    assert saved_context.last_bot_message_id == 501
+    assert saved_context.reply_action_hint == "single_start"
+
+
+def test_split_reply_action_pipeline_uses_context_turn_and_hand_index():
+    normalizer = TelegramUpdateNormalizer()
+    processor = AsyncMock()
+    processor.process.return_value = OrchestratorResult(
+        success=True,
+        command_type="player_action",
+        message="ok",
+        data={
+            "chat_mode": "single",
+            "session_id": 42,
+            "session_status": "in_progress",
+            "runtime_state": "player_turn",
+            "turn_version": 12,
+            "dealer": {"cards": ["10S", "?"], "is_final": False, "is_revealed": False},
+            "participants": [{"telegram_id": "tg-1", "username": "alice", "cards": ["8D", "3D"]}],
+            "current_player": {"telegram_id": "tg-1", "username": "alice", "hand_index": 1},
+            "available_moves": ["hit", "stand"],
+            "current_timer": None,
+        },
+    )
+
+    sender = AsyncMock()
+    sender.send_text.return_value = 778
+
+    context_store = AsyncMock()
+    context_store.get.return_value = SessionContext(
+        chat_id="chat-1",
+        chat_type="single",
+        session_id=42,
+        turn_version=11,
+        current_hand_index=1,
+        current_player_telegram_id="tg-1",
+        available_moves=["hit", "stand"],
+    )
+    context_store.set.return_value = None
+
+    timer_scheduler = AsyncMock()
+
+    pipeline = OrchestratorPipeline(
+        normalizer=normalizer,
+        processor=processor,
+        sender=sender,
+        timer_scheduler=timer_scheduler,
+        session_context_store=context_store,
+        context_ttl_seconds=600,
+    )
+
+    asyncio.run(pipeline.process_envelope(_make_envelope_with_chat(text="Hit")))
+
+    dispatched_command = processor.process.await_args.args[0]
+    assert dispatched_command.command_type == "player_action"
+    assert dispatched_command.action == "hit"
+    assert dispatched_command.turn_version == 11
+    assert dispatched_command.hand_index == 1
+
+
+def test_split_in_progress_pipeline_renders_inline_split_button_with_style():
+    normalizer = TelegramUpdateNormalizer()
+    processor = AsyncMock()
+    processor.process.return_value = OrchestratorResult(
+        success=True,
+        command_type="player_action",
+        message="ok",
+        data={
+            "chat_mode": "single",
+            "session_id": 42,
+            "session_status": "in_progress",
+            "runtime_state": "player_turn",
+            "turn_version": 8,
+            "dealer": {"cards": ["10S", "?"], "is_final": False, "is_revealed": False},
+            "participants": [
+                {
+                    "telegram_id": "tg-1",
+                    "username": "alice",
+                    "cards": ["8H", "8D"],
+                    "hands": [
+                        {
+                            "hand_index": 0,
+                            "cards": ["8H", "2H"],
+                            "participant_status": "inactive",
+                        },
+                        {
+                            "hand_index": 1,
+                            "cards": ["8D", "3D"],
+                            "participant_status": "active",
+                        },
+                    ],
+                }
+            ],
+            "current_player": {"telegram_id": "tg-1", "username": "alice", "hand_index": 1},
+            "available_moves": ["hit", "stand", "double", "split"],
+            "current_timer": None,
+        },
+    )
+
+    sender = AsyncMock()
+    sender.send_text.return_value = 777
+
+    context_store = AsyncMock()
+    context_store.get.return_value = SessionContext(chat_id="42", chat_type="single", session_id=42)
+    context_store.set.return_value = None
+
+    timer_scheduler = AsyncMock()
+
+    pipeline = OrchestratorPipeline(
+        normalizer=normalizer,
+        processor=processor,
+        sender=sender,
+        timer_scheduler=timer_scheduler,
+        session_context_store=context_store,
+        context_ttl_seconds=600,
+    )
+
+    asyncio.run(pipeline.process_envelope(_make_callback_envelope_with_chat(callback_data="action:split:tv:8:hand:1")))
+
+    sent_text = sender.send_text.await_args.kwargs["text"]
+    assert "Рука 1" in sent_text
+    assert "Рука 2" in sent_text
+    assert "текущая" in sent_text
+
+    keyboard = sender.send_text.await_args.kwargs["keyboard"]
+    assert keyboard is not None
+    assert keyboard.kind == "inline"
+
+    split_buttons = [btn for row in keyboard.rows for btn in row if btn.id == "split"]
+    assert len(split_buttons) == 1
+    split_button = split_buttons[0]
+    assert split_button.title == "Split"
+    assert split_button.action == "action:split:tv:8:hand:1"
+    assert split_button.style == "secondary"
+
+
+def test_split_pipeline_saves_second_hand_context_and_renders_hit_button_for_hand_two():
+    normalizer = TelegramUpdateNormalizer()
+    processor = AsyncMock()
+    processor.process.return_value = OrchestratorResult(
+        success=True,
+        command_type="player_action",
+        message="ok",
+        data={
+            "chat_mode": "single",
+            "session_id": 42,
+            "session_status": "in_progress",
+            "runtime_state": "player_turn",
+            "turn_version": 9,
+            "dealer": {"cards": ["10S", "?"], "is_final": False, "is_revealed": False},
+            "participants": [
+                {
+                    "telegram_id": "tg-1",
+                    "username": "alice",
+                    "cards": ["8H", "8D"],
+                    "hands": [
+                        {
+                            "hand_index": 0,
+                            "cards": ["8H", "2H"],
+                            "participant_status": "inactive",
+                        },
+                        {
+                            "hand_index": 1,
+                            "cards": ["8D", "3D"],
+                            "participant_status": "active",
+                        },
+                    ],
+                }
+            ],
+            "current_player": {"telegram_id": "tg-1", "username": "alice", "hand_index": 1},
+            # Deliberately omit top-level current_hand_index to verify fallback.
+            "available_moves": ["hit", "stand"],
+            "current_timer": None,
+        },
+    )
+
+    sender = AsyncMock()
+    sender.send_text.return_value = 779
+
+    context_store = AsyncMock()
+    context_store.get.return_value = SessionContext(chat_id="42", chat_type="single", session_id=42)
+    context_store.set.return_value = None
+
+    timer_scheduler = AsyncMock()
+
+    pipeline = OrchestratorPipeline(
+        normalizer=normalizer,
+        processor=processor,
+        sender=sender,
+        timer_scheduler=timer_scheduler,
+        session_context_store=context_store,
+        context_ttl_seconds=600,
+    )
+
+    asyncio.run(pipeline.process_envelope(_make_callback_envelope_with_chat(callback_data="action:split:tv:8:hand:1")))
+
+    saved_context: SessionContext = context_store.set.call_args[0][1]
+    assert saved_context.current_hand_index == 1
+    assert saved_context.available_moves == ["hit", "stand"]
+
+    keyboard = sender.send_text.await_args.kwargs["keyboard"]
+    assert keyboard is not None
+    hit_buttons = [btn for row in keyboard.rows for btn in row if btn.id == "hit"]
+    assert len(hit_buttons) == 1
+    assert hit_buttons[0].action == "action:hit:tv:9:hand:1"
+
+
+def test_cancel_timeout_called_for_successful_current_player_split_callback():
+    normalizer = TelegramUpdateNormalizer()
+    processor = AsyncMock()
+    processor.process.return_value = OrchestratorResult(
+        success=True,
+        command_type="player_action",
+        message="ok",
+        data={
+            "chat_mode": "single",
+            "session_id": 42,
+            "session_status": "in_progress",
+            "runtime_state": "player_turn",
+            "turn_version": 3,
+            "dealer": {"cards": ["10S", "?"], "is_final": False, "is_revealed": False},
+            "participants": [{"telegram_id": "tg-1", "username": "alice", "cards": ["8H", "8D"]}],
+            "current_player": {"telegram_id": "tg-1", "username": "alice", "hand_index": 1},
+            "available_moves": ["hit", "stand"],
+            "current_timer": None,
+        },
+    )
+
+    sender = AsyncMock()
+    sender.send_text.return_value = 888
+
+    context_store = AsyncMock()
+    context_store.get.return_value = SessionContext(
+        chat_id="42",
+        chat_type="single",
+        session_id=42,
+        current_player_telegram_id="tg-1",
+        last_bot_message_id=10,
+    )
+    context_store.set.return_value = None
+
+    timer_scheduler = AsyncMock()
+
+    pipeline = OrchestratorPipeline(
+        normalizer=normalizer,
+        processor=processor,
+        sender=sender,
+        timer_scheduler=timer_scheduler,
+        session_context_store=context_store,
+        context_ttl_seconds=600,
+    )
+
+    asyncio.run(pipeline.process_envelope(_make_callback_envelope_with_chat(callback_data="action:split:tv:2:hand:1")))
+
+    timer_scheduler.cancel_timeout.assert_awaited_once_with(
+        chat_id="42",
+        session_id=42,
+        turn_version=2,
+    )

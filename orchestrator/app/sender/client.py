@@ -4,6 +4,7 @@ from typing import Any
 import aiohttp
 
 from app.sender.interfaces import SenderService
+from app.sender.models import ParseMode
 from app.sender.models import UiKeyboard
 from app.sender.renderers import render_keyboard_markup
 
@@ -49,6 +50,7 @@ class TelegramSenderClient(SenderService):
         chat_id: str,
         text: str,
         keyboard: UiKeyboard | None = None,
+        parse_mode: ParseMode | None = None,
     ) -> int | None:
         if not self._bot_token:
             raise TelegramSenderError("TELEGRAM_BOT_TOKEN is empty")
@@ -63,6 +65,8 @@ class TelegramSenderClient(SenderService):
         reply_markup = render_keyboard_markup(keyboard)
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
+        if parse_mode is not None:
+            payload["parse_mode"] = parse_mode
 
         try:
             async with session.post(url, json=payload) as response:

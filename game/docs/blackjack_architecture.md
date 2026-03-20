@@ -31,7 +31,7 @@
 
 ### `app/domain/blackjack/action_dispatch.py`
 
-Унифицирует dispatch `hit/stand/double` в payload для repository.
+Унифицирует dispatch `hit/stand/double/split/insurance` в payload для repository.
 
 ### `app/domain/blackjack/dealer_policy.py`
 

@@ -36,7 +36,9 @@ services:
       DEBUG: 1
     ports:
       - "8001:8001"
-    command: ["sh", "-c", "python -m alembic upgrade head && python run.py"]
+    command: ["sh", "-c", "{ python -m alembic upgrade head && python run.py; } >> /var/log/kts-blackjack/game.log 2>&1"]
+    volumes:
+      - service_logs:/var/log/kts-blackjack
     healthcheck:
       test:
         [
@@ -117,6 +119,8 @@ services:
       OFFSET_STATE_PATH: /opt/service/var/state/offset.json
     volumes:
       - poller_state:/opt/service/var/state
+      - service_logs:/var/log/kts-blackjack
+    command: ["sh", "-c", "python run.py >> /var/log/kts-blackjack/poller.log 2>&1"]
     restart: unless-stopped
     init: true
 
@@ -142,6 +146,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
       KAFKA_AUTO_OFFSET_RESET: earliest
+    volumes:
+      - service_logs:/var/log/kts-blackjack
+    command: ["sh", "-c", "python run.py >> /var/log/kts-blackjack/orchestrator.log 2>&1"]
     restart: unless-stopped
     stop_signal: SIGTERM
     init: true
@@ -149,3 +156,4 @@ services:
 volumes:
   db_data:
   poller_state:
+  service_logs:

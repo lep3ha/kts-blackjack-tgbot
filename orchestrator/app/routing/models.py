@@ -13,13 +13,14 @@ CommandType = Literal[
     "single_start",
     "single_stop",
     "player_register",
+    "player_balance",
     "player_action",
     "current_session",
     "admin_topup",
     "admin_ban",
     "unsupported",
 ]
-PlayerActionType = Literal["hit", "stand", "double"]
+PlayerActionType = Literal["hit", "stand", "double", "split", "insurance"]
 
 
 @dataclass(slots=True)
@@ -35,6 +36,7 @@ class OrchestratorCommand:
     bet: int | None = None
     action: PlayerActionType | None = None
     turn_version: int | None = None
+    hand_index: int | None = None
     source_key: str = ""
     raw_payload: dict[str, Any] = field(default_factory=dict)
 

@@ -137,6 +137,17 @@ python run.py
 - `/create_lobby@blackjack_by_lep3ha_bot 200`
 - `/group_start@blackjack_by_lep3ha_bot`
 
+## Split Contract (Кратко)
+
+- Действие `split` доступно во время хода игрока через slash/reply/inline UX (`/split`, `Split`, callback).
+- Inline payload действий использует формат `action:<move>:tv:<turn_version>[:hand:<hand_index>]`.
+- Для message/reply `player_action` без `tv`/`hand` orchestrator наследует `turn_version` и `current_hand_index` из `SessionContext`.
+- Post-game действие выполняется inline callback-ами: `session:create:group` (создать новую групповую сессию) и `session:create:single` (начать новую одиночную игру).
+- Bot snapshot возвращает split-контекст в `current_hand_index` и `participants[].hands[]` (`hand_index`, `cards`, `bet`, `status`).
+- После завершения первой split-руки ход обязан перейти ко второй руке этого же игрока; к дилеру переход только когда активных рук у игрока не осталось.
+
+Детали: `game/docs/api.md`, `game/docs/game_logic.md`, `orchestrator/docs/command_flow.md`, `orchestrator/docs/entities.md`.
+
 ## Документация
 
 - [game/README.md](game/README.md)

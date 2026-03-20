@@ -34,6 +34,23 @@ class PlayersView(BaseView):
         return self.success_response(data, status=201)
 
 
+class PlayerByTelegramView(BaseView):
+    @swagger_doc(
+        summary="Get player by telegram id",
+        description="Returns player profile including current bank by telegram_id.",
+        tags=["catalog"],
+        response_model=PlayerCreateResponse,
+    )
+    async def get(self) -> web.Response:
+        telegram_id = self.request.match_info.get("telegram_id", "").strip()
+        if not telegram_id:
+            raise web.HTTPBadRequest(text="telegram_id is required")
+
+        accessor = self.request.app[catalog_accessor_key]
+        data = await accessor.get_player_by_telegram_id(telegram_id)
+        return self.success_response(data)
+
+
 class DecksView(BaseView):
     @swagger_doc(
         summary="Create deck",

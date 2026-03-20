@@ -18,32 +18,39 @@ class TelegramUpdateNormalizer:
         "/start_round": ("group_start", None),
         "/join": ("group_join", None),
         "/register": ("player_register", None),
+        "/balance": ("player_balance", None),
         "/current": ("current_session", None),
         "/admin_topup": ("admin_topup", None),
         "/admin_ban": ("admin_ban", None),
         "/hit": ("player_action", "hit"),
         "/stand": ("player_action", "stand"),
         "/double": ("player_action", "double"),
+        "/split": ("player_action", "split"),
+        "/insurance": ("player_action", "insurance"),
     }
 
     # Russian reply-keyboard labels → same command/action mapping.
     # Keys must exactly match the `action` strings used in _build_*_keyboard().
     _RU_TEXT_TO_COMMAND: dict[str, tuple[CommandType, str | None]] = {
-        "Ещё": ("player_action", "hit"),
-        "Стоп": ("player_action", "stand"),
-        "Двойная": ("player_action", "double"),
+        "Создать лобби": ("group_open", None),
+        "Открыть лобби": ("group_open", None),
+        "Создать сессию": ("group_open", None),
         "Текущая": ("current_session", None),
+        "Баланс": ("player_balance", None),
         "Hit": ("player_action", "hit"),
         "Stand": ("player_action", "stand"),
         "Double": ("player_action", "double"),
-        "Выйти из раунда": ("group_stop", None),
-        "Остановить игру": ("single_stop", None),
+        "Split": ("player_action", "split"),
+        "Insurance": ("player_action", "insurance"),
+        "Выйти": ("single_stop", None),
     }
 
     _CALLBACK_TO_COMMAND: dict[str, tuple[CommandType, str | None]] = {
         "action:hit": ("player_action", "hit"),
         "action:stand": ("player_action", "stand"),
         "action:double": ("player_action", "double"),
+        "action:split": ("player_action", "split"),
+        "action:insurance": ("player_action", "insurance"),
         "session:current": ("current_session", None),
     }
 
@@ -106,7 +113,11 @@ class TelegramUpdateNormalizer:
         if command_meta is None and normalized_text == "Начать игру":
             command_meta = self._resolve_start_game_command(payload, context=context)
 
-        if command_meta is None and normalized_text in {"Закончить", "Остановить игру"}:
+        if command_meta is not None and command_meta[0] in {"group_open", "group_start"}:
+            if self._extract_chat_type(payload) != "group":
+                command_meta = None
+
+        if command_meta is None and normalized_text in {"Закончить", "Закончить игру", "Остановить игру", "Выйти", "Выйти из раунда"}:
             command_meta = self._resolve_stop_command(payload)
 
         if command_meta is None and isinstance(text, str):
@@ -117,6 +128,10 @@ class TelegramUpdateNormalizer:
             if join_bet is not None:
                 command_meta = ("group_join", None)
                 bet = join_bet
+
+        if command_meta is not None and command_meta[0] in {"group_open", "group_start", "group_join", "group_stop"}:
+            if self._extract_chat_type(payload) != "group":
+                command_meta = None
 
         if command_meta is None:
             return self._unsupported(
@@ -132,6 +147,11 @@ class TelegramUpdateNormalizer:
         admin_target_username, admin_amount = self._extract_admin_args(text, command_type)
         if admin_amount is not None:
             bet = admin_amount
+        turn_version = None
+        hand_index = None
+        if command_type == "player_action" and context is not None:
+            turn_version = context.turn_version
+            hand_index = context.current_hand_index
         return OrchestratorCommand(
             update_id=envelope.update_id,
             chat_id=self._extract_chat_id(payload) or envelope.source_key,
@@ -143,6 +163,8 @@ class TelegramUpdateNormalizer:
             admin_target_username=admin_target_username,
             bet=bet,
             action=action,
+            turn_version=turn_version,
+            hand_index=hand_index,
             source_key=envelope.source_key,
             raw_payload=payload,
         )
@@ -200,6 +222,12 @@ class TelegramUpdateNormalizer:
 
         callback_data = callback_query.get("data")
         command_meta = self._resolve_callback_command(callback_data)
+        if command_meta is None and isinstance(callback_data, str) and callback_data.startswith("session:create"):
+            command_meta = self._resolve_create_session_callback(callback_data, payload)
+        if command_meta is None and isinstance(callback_data, str) and callback_data == "session:start:group":
+            command_meta = ("group_start", None)
+        if command_meta is None and isinstance(callback_data, str) and callback_data.startswith("session:join:"):
+            command_meta = self._resolve_join_session_callback(callback_data)
         if command_meta is None:
             return self._unsupported(
                 envelope=envelope,
@@ -212,6 +240,8 @@ class TelegramUpdateNormalizer:
 
         command_type, action = command_meta
         turn_version = self._extract_turn_version_from_callback(callback_data)
+        hand_index = self._extract_hand_index_from_callback(callback_data)
+        bet = self._extract_bet_from_session_join_callback(callback_data)
         return OrchestratorCommand(
             update_id=envelope.update_id,
             chat_id=self._extract_chat_id(payload) or envelope.source_key,
@@ -220,8 +250,10 @@ class TelegramUpdateNormalizer:
             actor_username=self._extract_actor_username(payload),
             actor_first_name=self._extract_actor_first_name(payload),
             command_type=command_type,
+            bet=bet,
             action=action,
             turn_version=turn_version,
+            hand_index=hand_index,
             source_key=envelope.source_key,
             raw_payload=payload,
         )
@@ -333,6 +365,26 @@ class TelegramUpdateNormalizer:
                 return None
         return None
 
+    @staticmethod
+    def _extract_hand_index_from_callback(callback_data: str | None) -> int | None:
+        if not isinstance(callback_data, str):
+            return None
+
+        parts = callback_data.split(":")
+        for index, part in enumerate(parts):
+            if part != "hand":
+                continue
+
+            next_index = index + 1
+            if next_index >= len(parts):
+                continue
+
+            try:
+                return int(parts[next_index])
+            except ValueError:
+                return None
+        return None
+
     @classmethod
     def _resolve_callback_command(
         cls,
@@ -350,6 +402,44 @@ class TelegramUpdateNormalizer:
             return cls._CALLBACK_TO_COMMAND.get(callback_key)
 
         return None
+
+    @staticmethod
+    def _resolve_create_session_callback(
+        callback_data: str,
+        payload: dict[str, Any],
+    ) -> tuple[CommandType, str | None]:
+        parts = callback_data.split(":")
+        mode = parts[2] if len(parts) >= 3 else ""
+        if mode == "group":
+            return "group_open", None
+        if mode == "single":
+            return "single_start", None
+
+        message = payload.get("message")
+        if isinstance(message, dict):
+            chat = message.get("chat")
+            if isinstance(chat, dict) and chat.get("type") in {"group", "supergroup"}:
+                return "group_open", None
+        return "single_start", None
+
+    @staticmethod
+    def _resolve_join_session_callback(callback_data: str) -> tuple[CommandType, str | None] | None:
+        parts = callback_data.split(":")
+        if len(parts) == 3 and parts[0] == "session" and parts[1] == "join":
+            return "group_join", None
+        return None
+
+    @staticmethod
+    def _extract_bet_from_session_join_callback(callback_data: str | None) -> int | None:
+        if not isinstance(callback_data, str):
+            return None
+        parts = callback_data.split(":")
+        if len(parts) != 3 or parts[0] != "session" or parts[1] != "join":
+            return None
+        try:
+            return int(parts[2])
+        except ValueError:
+            return None
 
     @staticmethod
     def _extract_bet_from_text(text: Any) -> int | None:

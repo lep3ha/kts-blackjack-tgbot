@@ -8,6 +8,7 @@ from app.routing.game_client.models import GroupOpenRequest
 from app.routing.game_client.models import GroupPlayerStopRequest
 from app.routing.game_client.models import GroupStartRequest
 from app.routing.game_client.models import PlayerActionRequest
+from app.routing.game_client.models import PlayerBalanceRequest
 from app.routing.game_client.models import RegisterPlayerRequest
 from app.routing.game_client.models import SingleStartRequest
 from app.routing.game_client.models import SingleStopRequest
@@ -209,6 +210,24 @@ class SessionCommandHandlers(BaseCommandHandlers):
         await self._update_context_from_envelope(command=command, envelope=envelope)
         return self._to_result(command=command, envelope=envelope)
 
+    async def handle_player_balance(self, command: OrchestratorCommand) -> OrchestratorResult:
+        if command.actor_telegram_id is None:
+            return OrchestratorResult(
+                success=False,
+                command_type=command.command_type,
+                message="actor_telegram_id is required for player_balance",
+                error_code="bad_request",
+            )
+
+        try:
+            envelope = await self._game_client.player_balance(
+                PlayerBalanceRequest(telegram_id=command.actor_telegram_id)
+            )
+        except Exception:
+            return self._request_failed_result(command)
+
+        return self._to_result(command=command, envelope=envelope)
+
     async def handle_player_action(self, command: OrchestratorCommand) -> OrchestratorResult:
         if command.actor_telegram_id is None:
             return OrchestratorResult(
@@ -256,6 +275,7 @@ class SessionCommandHandlers(BaseCommandHandlers):
                     actor_first_name=command.actor_first_name,
                     action=command.action,
                     turn_version=command.turn_version,
+                    hand_index=command.hand_index,
                 )
             )
 

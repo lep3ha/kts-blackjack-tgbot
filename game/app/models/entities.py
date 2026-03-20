@@ -60,6 +60,7 @@ class GameSession(Base):
     dealer_bet = Column(BigInteger, default=0, nullable=False)
     turn_version = Column(Integer, default=0, nullable=False)
     current_position = Column(Integer, nullable=True)
+    current_hand_index = Column(Integer, nullable=True)
     current_timer = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utc_now_naive, nullable=False)
 
@@ -77,10 +78,12 @@ class PlayerToSession(Base):
     position = Column(Integer, nullable=False)
     participant_status = Column(SQLEnum(ParticipantStatus), default=ParticipantStatus.joined, nullable=False)
     bet = Column(BigInteger, default=0, nullable=False)
+    insurance_bet = Column(BigInteger, default=0, nullable=False)
     cards = Column(JSON, default=list, nullable=False)
 
     player = relationship("Player", back_populates="sessions")
     session = relationship("GameSession", back_populates="players")
+    hands = relationship("PlayerHand", back_populates="player_to_session")
 
     __table_args__ = (
         UniqueConstraint("session_id", "position", name="uq_session_position"),
@@ -105,7 +108,27 @@ class State(Base):
     )
 
 
+class PlayerHand(Base):
+    __tablename__ = "player_hands"
+
+    id = Column(Integer, primary_key=True)
+    player_to_session_id = Column(Integer, ForeignKey("player_to_session.id", ondelete="CASCADE"), nullable=False)
+    hand_index = Column(Integer, nullable=False)
+    cards = Column(JSON, default=list, nullable=False)
+    bet = Column(BigInteger, default=0, nullable=False)
+    participant_status = Column(SQLEnum(ParticipantStatus), default=ParticipantStatus.joined, nullable=False)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
+
+    player_to_session = relationship("PlayerToSession", back_populates="hands")
+
+    __table_args__ = (
+        UniqueConstraint("player_to_session_id", "hand_index", name="uq_player_hand_index"),
+        CheckConstraint("hand_index >= 0 AND hand_index <= 3", name="ck_player_hands_hand_index_range"),
+    )
+
+
 Index("ix_game_sessions_deck_id", GameSession.deck_id)
+Index("ix_player_hands_player_to_session_id", PlayerHand.player_to_session_id)
 Index("ix_players_telegram_id", Player.telegram_id)
 Index(
     "uq_unfinished_session_per_deck",

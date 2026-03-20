@@ -15,6 +15,7 @@ from app.routing.game_client.models import (
     GroupPlayerStopRequest,
     GroupStartRequest,
     PlayerActionRequest,
+    PlayerBalanceRequest,
     RegisterPlayerRequest,
     SingleStartRequest,
     SingleStopRequest,
@@ -75,6 +76,9 @@ class HttpGameServiceClient(GameServiceClient):
 
     async def register_player(self, request: RegisterPlayerRequest) -> GameServiceEnvelope:
         return await self._post("/players", request.model_dump())
+
+    async def player_balance(self, request: PlayerBalanceRequest) -> GameServiceEnvelope:
+        return await self._get(f"/players/telegram/{request.telegram_id}", params={})
 
     async def player_action(self, request: PlayerActionRequest) -> GameServiceEnvelope:
         return await self._post("/bot/sessions/action", request.model_dump())

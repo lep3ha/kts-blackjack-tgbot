@@ -72,14 +72,16 @@ class BotActionRequest(BaseModel):
     actor_telegram_id: str = Field(min_length=1, max_length=64)
     actor_username: Optional[str] = Field(default=None, min_length=1, max_length=64)
     actor_first_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
-    action: str = Field(pattern="^(hit|stand|double)$")
+    action: str = Field(pattern="^(hit|stand|double|split|insurance)$")
     turn_version: int = Field(ge=0)
+    hand_index: Optional[int] = Field(default=None, ge=0)
 
 
 class BotTimeoutRequest(BaseModel):
     chat_id: str = Field(min_length=1, max_length=64)
     chat_type: str = Field(pattern="^(group|single)$")
     turn_version: int = Field(ge=0)
+    hand_index: Optional[int] = Field(default=None, ge=0)
 
 
 class GroupLobbyQueryRequest(BaseModel):
@@ -99,11 +101,17 @@ class GroupParticipantResponse(BaseModel):
     bank: int
     result: Optional[str] = None
     delta: Optional[int] = None
+    hand_settlements: list[dict[str, int | str]] = Field(default_factory=list)
+    hands: list[dict[str, int | str | list[str]]] = Field(default_factory=list)
 
 
 class CurrentPlayerResponse(BaseModel):
     telegram_id: str
     position: int
+    hand_index: Optional[int] = None
+    username: Optional[str] = None
+    first_name: Optional[str] = None
+    display_name: Optional[str] = None
 
 
 class DealerSnapshotResponse(BaseModel):
@@ -137,6 +145,7 @@ class GroupSessionSnapshotResponse(BaseModel):
     lobby: Optional[LobbySnapshotResponse] = None
     summary: Optional[SummarySnapshotResponse] = None
     available_moves: list[str] = Field(default_factory=list)
+    current_hand_index: Optional[int] = None
     current_position: Optional[int]
     current_timer: Optional[datetime]
     dealer_cards: list[str] = Field(default_factory=list)
@@ -159,5 +168,6 @@ class GroupSessionSnapshotCanonicalResponse(BaseModel):
     lobby: Optional[LobbySnapshotResponse] = None
     summary: Optional[SummarySnapshotResponse] = None
     available_moves: list[str] = Field(default_factory=list)
+    current_hand_index: Optional[int] = None
     current_timer: Optional[datetime]
     participants: list[GroupParticipantResponse] = Field(default_factory=list)
