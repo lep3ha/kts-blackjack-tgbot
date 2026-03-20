@@ -53,8 +53,36 @@ async def openapi_spec(_request: web.Request) -> web.Response:
     return web.json_response(spec)
 
 
+async def swagger_ui(_request: web.Request) -> web.Response:
+    """Возвращает Swagger UI, который использует /openapi.json как источник схемы."""
+    html = """<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+    <meta charset=\"UTF-8\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
+    <title>Game Service API Docs</title>
+    <link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css\" />
+</head>
+<body>
+    <div id=\"swagger-ui\"></div>
+    <script src=\"https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js\"></script>
+    <script>
+        window.onload = () => {
+            SwaggerUIBundle({
+                url: '/openapi.json',
+                dom_id: '#swagger-ui',
+            });
+        };
+    </script>
+</body>
+</html>
+"""
+    return web.Response(text=html, content_type="text/html")
+
+
 def setup_routes(app: web.Application) -> None:
     """Регистрирует минимальный набор рабочих маршрутов."""
     app.router.add_get("/health", health_check)
     app.router.add_get("/openapi.json", openapi_spec)
+    app.router.add_get("/docs", swagger_ui)
     setup_blackjack_routes(app)

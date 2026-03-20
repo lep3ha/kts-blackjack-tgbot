@@ -1,4 +1,4 @@
-# Blackjack Telegram Bot
+    # Blackjack Telegram Bot
 
 Микросервисный Telegram-бот для игры в блэкджек в личных чатах и группах.
 

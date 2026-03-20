@@ -105,6 +105,13 @@ class TestBlackjackIntegrationFlow(AioHTTPTestCase):
         assert openapi_data["openapi"] == "3.0.3"
         assert "/sessions/{session_id}/actions" in openapi_data["paths"]
 
+        docs_resp = await self.client.request("GET", "/docs")
+        assert docs_resp.status == 200
+        assert docs_resp.content_type == "text/html"
+        docs_html = await docs_resp.text()
+        assert "SwaggerUIBundle" in docs_html
+        assert "/openapi.json" in docs_html
+
     async def test_group_lobby_bot_flow_with_db(self):
         suffix = uuid4().hex[:8]
 
