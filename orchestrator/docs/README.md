@@ -6,7 +6,7 @@
 
 - consume flow от Kafka до Telegram ответа;
 - Redis context, dedup и timer architecture;
-- normalization, local guards, cleanup и timeout semantics.
+- normalization, local guards, cleanup и timeout semantics (включая split-hand кейсы).
 
 ## Карта документов
 

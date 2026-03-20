@@ -8,7 +8,7 @@
 
 Сервис делает:
 - lifecycle single и group сессий;
-- обработку `hit`, `stand`, `double`, `timeout`, bot stop-сценариев;
+- обработку `hit`, `stand`, `double`, `split`, `insurance`, `timeout`, bot stop-сценариев;
 - расчет дилера и settlement;
 - bot-facing и debug/runtime HTTP API.
 

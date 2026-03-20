@@ -18,6 +18,7 @@ class BlackjackAccessor:
             state=context.state,
             available_moves=list(available_moves),
             current_position=context.current_position,
+            current_hand_index=context.current_hand_index,
             current_timer=context.current_timer,
             dealer_cards=list(context.dealer_cards),
             players=[
@@ -42,7 +43,7 @@ class BlackjackAccessor:
     async def make_action(self, session_id: int, payload: ActionRequest) -> dict:
         async for db in get_db():
             machine = await BlackjackService.load(db, session_id)
-            context = await machine.apply_action(payload.position, payload.action)
+            context = await machine.apply_action(payload.position, payload.action, hand_index=payload.hand_index)
             return self._context_to_response(context, available_moves=machine.available_moves()).model_dump()
         raise RuntimeError("Database session is unavailable")
 

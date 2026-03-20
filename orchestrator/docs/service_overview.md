@@ -37,3 +37,5 @@
 2. Reply UX зависит от `SessionContext.reply_action_hint`.
 3. Cleanup предыдущего game-state сообщения зависит от результата и текущего игрока.
 4. Timeout worker использует Redis keys для retention, claim и done semantics.
+5. Для split timeout сохраняет hand context (`Рука N`) в уведомлении, а успешный split callback отменяет timeout по актуальному `turn_version`.
+6. После завершения игры post-game действие отдается inline callback-ом: `session:create:group` для group и `session:create:single` для single.

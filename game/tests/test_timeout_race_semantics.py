@@ -148,3 +148,66 @@ def test_bot_timeout_requires_active_turn(monkeypatch):
             await accessor.apply_timeout(payload)
 
     asyncio.run(run())
+
+
+def test_bot_timeout_propagates_split_hand_index_to_machine(monkeypatch):
+    class DummySession:
+        id = 123
+        status = SessionStatus.in_progress
+        chat_mode = ChatMode.single
+
+    class DummyModel:
+        turn_version = 10
+        current_position = 1
+
+        def player_by_position(self, position):
+            if position != 1:
+                return None
+            return PlayerSlotSnapshot(
+                player_to_session_id=1,
+                player_id=10,
+                position=1,
+                bet=100,
+                participant_status=ParticipantStatus.active,
+                cards=["9S", "2H"],
+                bank=1000,
+            )
+
+    class DummyMachine:
+        def __init__(self):
+            self.model = DummyModel()
+            self.timeout_calls = []
+
+        async def handle_timeout(self, position=None, hand_index=None):
+            self.timeout_calls.append({"position": position, "hand_index": hand_index})
+            return type("Ctx", (), {"session_id": 123})()
+
+    machine = DummyMachine()
+
+    async def fake_get_db():
+        yield object()
+
+    async def fake_get_unfinished_session_by_chat_id(self, db, chat_id, *, chat_mode=None):
+        return DummySession()
+
+    async def fake_build_session_snapshot(self, db, session_id):
+        return {"ok": True, "session_id": session_id}
+
+    async def fake_load(db, session_id, *, turn_timeout_seconds=30, for_update=True):
+        return machine
+
+    monkeypatch.setattr(BotGameAccessor, "_iter_db", lambda self: fake_get_db())
+    monkeypatch.setattr(BotGameAccessor, "_get_unfinished_session_by_chat_id", fake_get_unfinished_session_by_chat_id)
+    monkeypatch.setattr(BotGameAccessor, "_build_session_snapshot", fake_build_session_snapshot)
+    monkeypatch.setattr(bot_common_module.BlackjackService, "load", staticmethod(fake_load))
+
+    payload = BotTimeoutRequest(chat_id="chat-1", chat_type="single", turn_version=10, hand_index=1)
+
+    async def run():
+        accessor = BotGameAccessor()
+        data = await accessor.apply_timeout(payload)
+        assert data == {"ok": True, "session_id": 123}
+
+    asyncio.run(run())
+
+    assert machine.timeout_calls == [{"position": 1, "hand_index": 1}]

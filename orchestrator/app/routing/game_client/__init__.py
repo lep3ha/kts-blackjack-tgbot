@@ -13,6 +13,7 @@ from app.routing.game_client.models import GroupJoinRequest
 from app.routing.game_client.models import GroupOpenRequest
 from app.routing.game_client.models import GroupStartRequest
 from app.routing.game_client.models import PlayerActionRequest
+from app.routing.game_client.models import PlayerBalanceRequest
 from app.routing.game_client.models import RegisterPlayerRequest
 from app.routing.game_client.models import SingleStartRequest
 from app.routing.game_client.models import SingleStopRequest
@@ -32,6 +33,7 @@ __all__ = [
 	"GroupStartRequest",
 	"HttpGameServiceClient",
 	"PlayerActionRequest",
+	"PlayerBalanceRequest",
 	"RegisterPlayerRequest",
 	"SingleStartRequest",
 	"SingleStopRequest",

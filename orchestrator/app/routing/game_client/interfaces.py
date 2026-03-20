@@ -10,6 +10,7 @@ from app.routing.game_client.models import (
     GroupPlayerStopRequest,
     GroupStartRequest,
     PlayerActionRequest,
+    PlayerBalanceRequest,
     RegisterPlayerRequest,
     SingleStartRequest,
     SingleStopRequest,
@@ -38,6 +39,9 @@ class GameServiceClient(Protocol):
 
     async def register_player(self, request: RegisterPlayerRequest) -> GameServiceEnvelope:
         """Register a player in game-service catalog."""
+
+    async def player_balance(self, request: PlayerBalanceRequest) -> GameServiceEnvelope:
+        """Read player profile/balance by telegram id."""
 
     async def player_action(self, request: PlayerActionRequest) -> GameServiceEnvelope:
         """Submit a player action via game-service."""

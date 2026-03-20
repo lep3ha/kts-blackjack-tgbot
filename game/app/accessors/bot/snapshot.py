@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import NotFoundError
-from app.models import ChatMode, Deck, GameSession, Player, SessionStatus
+from app.models import ChatMode, Deck, GameSession, Player, PlayerHand, SessionStatus
 from app.schemas import GroupSessionSnapshotCanonicalResponse, GroupSessionSnapshotResponse
 from app.services.blackjack_service import BlackjackService
 
@@ -77,13 +77,20 @@ class SnapshotBotMixin:
             }
 
         position_to_telegram_id = {seat.position: player.telegram_id for seat, player in participants}
+        position_to_player = {seat.position: player for seat, player in participants}
+        hands_by_seat_id = await self._get_hands_by_seat_id(db, participants)
         current_player = None
         if session.current_position is not None:
             telegram_id = position_to_telegram_id.get(session.current_position)
+            player = position_to_player.get(session.current_position)
             if telegram_id is not None:
                 current_player = {
                     "telegram_id": telegram_id,
                     "position": session.current_position,
+                    "hand_index": session.current_hand_index,
+                    "username": player.username if player else None,
+                    "first_name": player.first_name if player else None,
+                    "display_name": self._resolve_display_name(player) if player else None,
                 }
 
         base_payload = dict(
@@ -102,6 +109,7 @@ class SnapshotBotMixin:
             lobby=lobby,
             summary=summary,
             available_moves=available_moves,
+            current_hand_index=session.current_hand_index,
             current_timer=session.current_timer,
             participants=[
                 {
@@ -115,8 +123,20 @@ class SnapshotBotMixin:
                     "bet": seat.bet,
                     "cards": list(seat.cards or []),
                     "bank": player.bank,
+                    "insurance_bet": int(seat.insurance_bet or 0),
                     "result": result_map.get(seat.position, {}).get("result"),
                     "delta": result_map.get(seat.position, {}).get("delta"),
+                    "insurance_delta": result_map.get(seat.position, {}).get("insurance_delta", 0),
+                    "hand_settlements": result_map.get(seat.position, {}).get("hand_settlements") or [],
+                    "hands": hands_by_seat_id.get(seat.id)
+                    or [
+                        {
+                            "hand_index": 0,
+                            "cards": list(seat.cards or []),
+                            "bet": seat.bet,
+                            "participant_status": seat.participant_status.value,
+                        }
+                    ],
                 }
                 for seat, player in participants
             ],
@@ -141,3 +161,25 @@ class SnapshotBotMixin:
         if status == SessionStatus.in_progress:
             return "player_turn"
         return "closed"
+
+    async def _get_hands_by_seat_id(self, db: AsyncSession, participants) -> dict[int, list[dict[str, int | str | list[str]]]]:
+        seat_ids = [seat.id for seat, _ in participants]
+        if not seat_ids:
+            return {}
+
+        hands_result = await db.execute(
+            select(PlayerHand)
+            .where(PlayerHand.player_to_session_id.in_(seat_ids))
+            .order_by(PlayerHand.player_to_session_id, PlayerHand.hand_index)
+        )
+        payload: dict[int, list[dict[str, int | str | list[str]]]] = {}
+        for hand in hands_result.scalars().all():
+            payload.setdefault(hand.player_to_session_id, []).append(
+                {
+                    "hand_index": hand.hand_index,
+                    "cards": list(hand.cards or []),
+                    "bet": hand.bet,
+                    "participant_status": hand.participant_status.value,
+                }
+            )
+        return payload

@@ -85,3 +85,52 @@ def test_available_moves_excludes_double_when_bank_insufficient_for_double():
     assert "hit" in moves
     assert "stand" in moves
     assert "double" not in moves
+
+
+def test_available_moves_includes_insurance_only_when_dealer_shows_ace():
+    ace_context = BlackjackSessionContext(
+        session_id=1,
+        deck_id=1,
+        status=SessionStatus.in_progress,
+        state="player_turn",
+        chat_mode=ChatMode.group,
+        dealer_cards=["AS", "9H"],
+        current_position=1,
+        players=[
+            PlayerSlotSnapshot(
+                player_to_session_id=1,
+                player_id=10,
+                position=1,
+                bet=100,
+                participant_status=ParticipantStatus.active,
+                cards=["9S", "2H"],
+                bank=1000,
+            )
+        ],
+    )
+    no_ace_context = BlackjackSessionContext(
+        session_id=2,
+        deck_id=1,
+        status=SessionStatus.in_progress,
+        state="player_turn",
+        chat_mode=ChatMode.group,
+        dealer_cards=["9S", "AH"],
+        current_position=1,
+        players=[
+            PlayerSlotSnapshot(
+                player_to_session_id=1,
+                player_id=10,
+                position=1,
+                bet=100,
+                participant_status=ParticipantStatus.active,
+                cards=["9S", "2H"],
+                bank=1000,
+            )
+        ],
+    )
+
+    ace_service = BlackjackService(repository=DummyRepository(), model=ace_context)
+    no_ace_service = BlackjackService(repository=DummyRepository(), model=no_ace_context)
+
+    assert "insurance" in ace_service.available_moves()
+    assert "insurance" not in no_ace_service.available_moves()

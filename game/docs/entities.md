@@ -83,7 +83,7 @@ In-memory проекция состояния, с которой работае�
 
 ### `action_dispatch.py`
 
-Преобразует `hit/stand/double` в единый persistence-ready payload.
+Преобразует `hit/stand/double/split/insurance` в единый persistence-ready payload.
 
 ### `dealer_policy.py`
 

@@ -4,6 +4,7 @@ from app.accessors import bot_accessor_key, setup_accessors
 from app.accessors.bot import _DEALER_REVEAL_STATES
 from app.core.config import Settings
 from app.schemas import DealerSnapshotResponse, GroupSessionSnapshotCanonicalResponse, GroupSessionSnapshotResponse
+from app.schemas import GroupParticipantResponse
 
 
 def test_legacy_schema_contains_legacy_fields():
@@ -49,3 +50,16 @@ def test_dealer_reveal_states_excludes_player_phases():
     assert "player_turn" not in _DEALER_REVEAL_STATES
     assert "waiting" not in _DEALER_REVEAL_STATES
     assert "dealing" not in _DEALER_REVEAL_STATES
+
+
+def test_snapshot_schemas_include_current_hand_index_field():
+    assert "current_hand_index" in GroupSessionSnapshotResponse.model_fields
+    assert "current_hand_index" in GroupSessionSnapshotCanonicalResponse.model_fields
+
+
+def test_participant_schema_includes_hand_settlements_field():
+    assert "hand_settlements" in GroupParticipantResponse.model_fields
+
+
+def test_participant_schema_includes_hands_field():
+    assert "hands" in GroupParticipantResponse.model_fields

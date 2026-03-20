@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -7,6 +8,7 @@ if TYPE_CHECKING:
     from app.routing.models import OrchestratorResult
 
 from app.sender.models import OutboundMessage
+from app.sender.models import ParseMode
 from app.sender.models import UiButton
 from app.sender.models import UiKeyboard
 
@@ -14,15 +16,71 @@ from app.sender.models import UiKeyboard
 DEFAULT_BET = 100
 
 
-def present_orchestrator_result(chat_id: str, result: OrchestratorResult) -> OutboundMessage:
+def present_orchestrator_result(
+    chat_id: str,
+    result: OrchestratorResult,
+    *,
+    chat_type: str | None = None,
+    target_username: str | None = None,
+    target_telegram_id: str | None = None,
+    target_first_name: str | None = None,
+) -> OutboundMessage:
     data = result.data if isinstance(result.data, dict) else None
 
     if result.success:
         text, keyboard = _present_success(result=result, data=data)
-        return OutboundMessage(chat_id=chat_id, text=text, keyboard=keyboard)
+        text, parse_mode = _apply_group_reply_targeting(
+            text=text,
+            keyboard=keyboard,
+            chat_type=chat_type,
+            target_username=target_username,
+            target_telegram_id=target_telegram_id,
+            target_first_name=target_first_name,
+        )
+        return OutboundMessage(chat_id=chat_id, text=text, keyboard=keyboard, parse_mode=parse_mode)
 
     text, keyboard = _present_error(result=result, data=data)
-    return OutboundMessage(chat_id=chat_id, text=text, keyboard=keyboard)
+    text, parse_mode = _apply_group_reply_targeting(
+        text=text,
+        keyboard=keyboard,
+        chat_type=chat_type,
+        target_username=target_username,
+        target_telegram_id=target_telegram_id,
+        target_first_name=target_first_name,
+    )
+    return OutboundMessage(chat_id=chat_id, text=text, keyboard=keyboard, parse_mode=parse_mode)
+
+
+def _apply_group_reply_targeting(
+    *,
+    text: str,
+    keyboard: UiKeyboard | None,
+    chat_type: str | None,
+    target_username: str | None,
+    target_telegram_id: str | None,
+    target_first_name: str | None,
+) -> tuple[str, ParseMode | None]:
+    if keyboard is None or keyboard.kind != "reply":
+        return text, None
+
+    if chat_type != "group":
+        return text, None
+
+    if isinstance(target_username, str) and target_username:
+        if text.startswith("@"):
+            return text, None
+        return f"@{target_username} {text}", None
+
+    if not (isinstance(target_telegram_id, str) and target_telegram_id):
+        return text, None
+
+    display_name = target_first_name.strip() if isinstance(target_first_name, str) else ""
+    mention_text = html.escape(display_name or "игрок")
+    mention = f'<a href="tg://user?id={target_telegram_id}">{mention_text}</a>'
+    if text.startswith("<a href=\"tg://user?id="):
+        return text, "HTML"
+
+    return f"{mention} {text}", "HTML"
 
 
 def _present_success(
@@ -54,15 +112,23 @@ def _present_success(
             text = f"Игрок зарегистрирован. Баланс: {bank}."
         return text, _build_registration_keyboard()
 
+    if result.command_type == "player_balance":
+        bank = _format_int(data.get("bank") if data else None)
+        if bank is not None:
+            return f"Текущий баланс: {bank}.", _build_registration_keyboard()
+        return "Не удалось получить баланс.", _build_registration_keyboard()
+
     if result.command_type in {"group_open", "group_join"}:
         bet = _extract_lobby_bet(data) or DEFAULT_BET
-        return _build_lobby_message(data), _build_group_lobby_keyboard(bet=bet)
+        return _build_lobby_message(data), _build_group_lobby_inline_keyboard(bet=bet)
 
     if result.command_type == "single_stop":
-        return _build_game_over_message(data), _build_post_game_keyboard()
+        chat_mode = str(data.get("chat_mode")) if data and data.get("chat_mode") is not None else "single"
+        return _build_game_over_message(data), _build_post_game_keyboard(chat_mode=chat_mode)
 
     if _is_closed_session(data):
-        return _build_game_over_message(data), _build_post_game_keyboard()
+        chat_mode = str(data.get("chat_mode")) if data and data.get("chat_mode") is not None else "single"
+        return _build_game_over_message(data), _build_post_game_keyboard(chat_mode=chat_mode)
 
     if result.command_type in {"group_start", "single_start", "player_action", "current_session"}:
         keyboard = _build_action_inline_keyboard(data)
@@ -70,7 +136,8 @@ def _present_success(
             keyboard = _build_session_keyboard(data)
         return _build_game_state_message(data), keyboard
 
-    return "Команда выполнена.", _build_post_game_keyboard()
+    chat_mode = str(data.get("chat_mode")) if data and data.get("chat_mode") is not None else "single"
+    return "Команда выполнена.", _build_post_game_keyboard(chat_mode=chat_mode)
 
 
 def _present_error(
@@ -103,20 +170,21 @@ def _present_error(
         )
 
     if result.error_code == "not_found":
+        chat_mode = str(data.get("chat_mode")) if data and data.get("chat_mode") is not None else "single"
         return (
             "Нужная игровая сущность не найдена. Сначала зарегистрируй игрока или открой новую сессию.",
-            _build_post_game_keyboard(),
+            _build_post_game_keyboard(chat_mode=chat_mode),
         )
 
     if result.error_code == "state_conflict":
         return (
-            result.message or "Действие не подходит к текущему состоянию игры.",
+            "Действие не подходит к текущему состоянию игры.",
             _build_session_keyboard(data),
         )
 
     if result.error_code == "game_logic_error":
         return (
-            result.message or "Действие нарушает правила игры.",
+            "Действие нарушает правила игры.",
             _build_session_keyboard(data),
         )
 
@@ -148,10 +216,6 @@ def _build_lobby_message(data: dict[str, Any] | None) -> str:
         lines.append("Участники:")
         lines.extend(participants)
 
-    total_bank = _players_total_bank(data)
-    if total_bank is not None:
-        lines.append("")
-        lines.append(f"Общий счет игроков: {total_bank}")
 
     lines.append("")
     if can_start:
@@ -170,6 +234,10 @@ def _build_game_state_message(data: dict[str, Any] | None) -> str:
 
     runtime_state = data.get("runtime_state") or "неизвестно"
     current_player = data.get("current_player") if isinstance(data.get("current_player"), dict) else {}
+    current_hand_index = current_player.get("hand_index") if current_player else None
+    if not isinstance(current_hand_index, int):
+        current_hand_index = data.get("current_hand_index") if isinstance(data.get("current_hand_index"), int) else None
+    hand_suffix = f" (Рука {int(current_hand_index) + 1})" if isinstance(current_hand_index, int) else ""
     current_username = (
         current_player.get("username")
         or current_player.get("display_name")
@@ -177,7 +245,7 @@ def _build_game_state_message(data: dict[str, Any] | None) -> str:
     ) if current_player else None
 
     if current_username:
-        lines = [f"Раунд: {runtime_state} | Ход: {current_username}"]
+        lines = [f"Раунд: {runtime_state} | Ход: {current_username}{hand_suffix}"]
     else:
         lines = [f"Раунд: {runtime_state}"]
 
@@ -221,37 +289,36 @@ def _build_tutorial_message(*, chat_type: str) -> str:
     if chat_type == "group":
         return (
             "Как играть:\n"
-            "1) Нажми «Начать игру», чтобы открыть лобби.\n"
+            "1) Нажми «Открыть лобби», чтобы создать лобби.\n"
             "2) Игроки присоединяются кнопкой «Присоединиться».\n"
-            "3) Когда все готовы, нажми «Начать игру» ещё раз, чтобы запустить раунд."
+            "3) Когда все готовы, нажми «Начать игру», чтобы запустить раунд."
         )
 
     return (
         "Как играть:\n"
         "1) Нажми «Начать игру».\n"
-        "2) Используй кнопки Hit/Stand/Double во время хода.\n"
+        "2) Используй кнопки Hit/Stand/Double/Split/Insurance во время хода.\n"
         "3) Проверяй состояние кнопкой «Текущая»."
     )
 
 
 def _build_tutorial_keyboard(*, chat_type: str) -> UiKeyboard:
-    start_text = "Начать игру"
+    start_text = "Создать лобби" if chat_type == "group" else "Начать игру"
     return UiKeyboard(
         kind="reply",
         rows=[
+            [UiButton(id="balance", title="Баланс", action="Баланс")],
             [UiButton(id="start_game", title=start_text, action=start_text, style="primary")],
-            [UiButton(id="current", title="Текущая", action="Текущая")],
         ],
     )
 
 
-def _build_group_lobby_keyboard(*, bet: int) -> UiKeyboard:
+def _build_group_lobby_inline_keyboard(*, bet: int) -> UiKeyboard:
     return UiKeyboard(
-        kind="reply",
+        kind="inline",
         rows=[
-            [UiButton(id="join", title=f"Присоединиться ({bet})", action=f"/join {bet}", style="primary")],
-            [UiButton(id="start_round", title="Начать игру", action="Начать игру")],
-            [UiButton(id="current", title="Текущая", action="Текущая")],
+            [UiButton(id="join", title=f"Присоединиться (ставка: {bet})", action=f"session:join:{bet}", style="primary")],
+            [UiButton(id="start_round", title="Начать игру", action="session:start:group", style="secondary")],
         ],
     )
 
@@ -262,16 +329,24 @@ def _build_registration_keyboard() -> UiKeyboard:
         rows=[
             [UiButton(id="start", title="Начать игру", action="Начать игру", style="primary")],
             [UiButton(id="current", title="Текущая", action="Текущая")],
+            [UiButton(id="balance", title="Баланс", action="Баланс")],
         ],
     )
 
 
-def _build_post_game_keyboard() -> UiKeyboard:
+def _build_post_game_keyboard(*, chat_mode: str) -> UiKeyboard:
+    is_group = chat_mode == "group"
     return UiKeyboard(
-        kind="reply",
+        kind="inline",
         rows=[
-            [UiButton(id="start", title="Начать игру", action="Начать игру", style="primary")],
-            [UiButton(id="current", title="Текущая", action="Текущая")],
+            [
+                UiButton(
+                    id="create_session" if is_group else "start_single",
+                    title="Создать сессию" if is_group else "Начать игру",
+                    action="session:create:group" if is_group else "session:create:single",
+                    style="primary",
+                )
+            ],
         ],
     )
 
@@ -280,29 +355,29 @@ def _build_session_keyboard(data: dict[str, Any] | None) -> UiKeyboard:
     session_status = data.get("session_status") if isinstance(data, dict) else None
     chat_mode = data.get("chat_mode") if isinstance(data, dict) else None
 
-    if chat_mode == "single":
-        return UiKeyboard(
-            kind="reply",
-            rows=[
-                [UiButton(id="current", title="Текущая", action="Текущая")],
-                [UiButton(id="stop", title="Остановить игру", action="Остановить игру", style="danger")],
-            ],
-        )
-
     if session_status == "in_progress":
+        leave_action = "Выйти"
         return UiKeyboard(
             kind="reply",
             rows=[
+                [UiButton(id="balance", title="Баланс", action="Баланс")],
+                [UiButton(id="leave", title="Выйти", action=leave_action, style="danger")],
                 [UiButton(id="current", title="Текущая", action="Текущая")],
-                [UiButton(id="group_stop", title="Выйти из раунда", action="Выйти из раунда", style="danger")],
             ],
         )
 
     return UiKeyboard(
         kind="reply",
         rows=[
-            [UiButton(id="current", title="Текущая", action="Текущая")],
-            [UiButton(id="start_round", title="Начать игру", action="Начать игру")],
+            [UiButton(id="balance", title="Баланс", action="Баланс")],
+            [
+                UiButton(
+                    id="open_lobby" if chat_mode == "group" else "start_single",
+                    title="Создать лобби" if chat_mode == "group" else "Начать игру",
+                    action="Создать лобби" if chat_mode == "group" else "Начать игру",
+                    style="primary",
+                )
+            ],
         ],
     )
 
@@ -311,6 +386,8 @@ _ACTION_TITLES: dict[str, str] = {
     "hit": "Hit",
     "stand": "Stand",
     "double": "Double",
+    "split": "Split",
+    "insurance": "Insurance",
 }
 
 
@@ -320,6 +397,10 @@ def _build_action_inline_keyboard(data: dict[str, Any] | None) -> UiKeyboard | N
 
     available_moves = data.get("available_moves")
     turn_version = data.get("turn_version")
+    current_player = data.get("current_player") if isinstance(data.get("current_player"), dict) else {}
+    hand_index = current_player.get("hand_index") if isinstance(current_player.get("hand_index"), int) else None
+    if hand_index is None and isinstance(data.get("current_hand_index"), int):
+        hand_index = data.get("current_hand_index")
     if not isinstance(available_moves, list) or not isinstance(turn_version, int):
         return None
 
@@ -333,7 +414,11 @@ def _build_action_inline_keyboard(data: dict[str, Any] | None) -> UiKeyboard | N
                 UiButton(
                     id=move,
                     title=_ACTION_TITLES.get(move, move.capitalize()),
-                    action=f"action:{move}:tv:{turn_version}",
+                    action=(
+                        f"action:{move}:tv:{turn_version}:hand:{hand_index}"
+                        if hand_index is not None
+                        else f"action:{move}:tv:{turn_version}"
+                    ),
                     style="primary" if move == "hit" else "danger" if move == "double" else "secondary",
                 )
             ]
@@ -375,6 +460,9 @@ def _format_participants(
     participants_raw = data.get("participants")
     current_player = data.get("current_player") if isinstance(data.get("current_player"), dict) else {}
     current_player_id = current_player.get("telegram_id")
+    current_hand_index = current_player.get("hand_index") if isinstance(current_player.get("hand_index"), int) else None
+    if current_hand_index is None and isinstance(data.get("current_hand_index"), int):
+        current_hand_index = data.get("current_hand_index")
 
     if not isinstance(participants_raw, list):
         return []
@@ -389,14 +477,19 @@ def _format_participants(
         marker = "-> " if telegram_id == current_player_id else "   "
         bet = participant.get("bet")
         bank = participant.get("bank")
+        insurance_bet = participant.get("insurance_bet")
         cards = participant.get("cards")
+        hands = participant.get("hands") if isinstance(participant.get("hands"), list) else None
 
         line = f"{marker}{username}"
         if bet is not None:
             line += f" | Ставка: {bet}"
+        if not include_results and isinstance(insurance_bet, int) and insurance_bet > 0:
+            line += f" | Страховка: {insurance_bet}"
         if bank is not None:
             line += f" | Банк: {bank}"
-        if isinstance(cards, list) and cards:
+        has_split_hands = bool(isinstance(hands, list) and len(hands) > 1)
+        if not has_split_hands and isinstance(cards, list) and cards:
             line += f" | {' '.join(str(card) for card in cards)}"
             points = _format_hand_points(cards)
             if points:
@@ -411,6 +504,60 @@ def _format_participants(
                 delta_str = f"+{delta}" if delta >= 0 else str(delta)
                 line += f" ({delta_str})"
 
+            insurance_delta = participant.get("insurance_delta")
+            if isinstance(insurance_delta, int) and insurance_delta != 0:
+                insurance_delta_str = f"+{insurance_delta}" if insurance_delta >= 0 else str(insurance_delta)
+                line += f" | Страховка: {insurance_delta_str}"
+
+            hand_settlements = participant.get("hand_settlements")
+            hand_breakdown = _format_hand_settlements(hand_settlements)
+            if hand_breakdown:
+                line += f" | {hand_breakdown}"
+
+        lines.append(line)
+
+        if has_split_hands:
+            lines.extend(
+                _format_split_hands(
+                    hands=hands,
+                    is_current_player=telegram_id == current_player_id,
+                    current_hand_index=current_hand_index,
+                )
+            )
+
+    return lines
+
+
+def _format_split_hands(
+    *,
+    hands: list[Any],
+    is_current_player: bool,
+    current_hand_index: int | None,
+) -> list[str]:
+    lines: list[str] = []
+    for hand in hands:
+        if not isinstance(hand, dict):
+            continue
+
+        hand_index = hand.get("hand_index")
+        hand_no = int(hand_index) + 1 if isinstance(hand_index, int) and hand_index >= 0 else None
+        cards = hand.get("cards")
+
+        line = "   "
+        if hand_no is not None:
+            line += f"Рука {hand_no}"
+        else:
+            line += "Рука"
+
+        if isinstance(cards, list) and cards:
+            line += f": {' '.join(str(card) for card in cards)}"
+            points = _format_hand_points(cards)
+            if points:
+                line += f" | Очки: {points}"
+
+        if is_current_player and current_hand_index is not None and hand_index == current_hand_index:
+            line += " | текущая"
+
         lines.append(line)
 
     return lines
@@ -421,6 +568,33 @@ def _format_available_moves(data: dict[str, Any]) -> str:
     if not isinstance(available_moves, list):
         return ""
     return ", ".join(str(move) for move in available_moves)
+
+
+def _format_hand_settlements(hand_settlements: Any) -> str:
+    if not isinstance(hand_settlements, list) or not hand_settlements:
+        return ""
+
+    chunks: list[str] = []
+    for entry in hand_settlements:
+        if not isinstance(entry, dict):
+            continue
+
+        hand_index = entry.get("hand_index")
+        hand_no = int(hand_index) + 1 if isinstance(hand_index, int) and hand_index >= 0 else None
+        result = entry.get("result") if isinstance(entry.get("result"), str) else None
+        delta = entry.get("delta") if isinstance(entry.get("delta"), int) else None
+        if hand_no is None and result is None and delta is None:
+            continue
+
+        text = f"Рука {hand_no}" if hand_no is not None else "Рука"
+        if result is not None:
+            text += f": {result}"
+        if delta is not None:
+            delta_str = f"+{delta}" if delta >= 0 else str(delta)
+            text += f" ({delta_str})"
+        chunks.append(text)
+
+    return "; ".join(chunks)
 
 
 def _extract_lobby_bet(data: dict[str, Any] | None) -> int | None:

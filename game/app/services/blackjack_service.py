@@ -133,21 +133,27 @@ class BlackjackService(StateChart[BlackjackSessionContext]):
         return await self._run_transaction(self._start_session_flow)
 
     # Применяет пользовательское действие и при необходимости запускает дилера и расчёт.
-    async def apply_action(self, position: int, action: str) -> BlackjackSessionContext:
+    async def apply_action(self, position: int, action: str, hand_index: Optional[int] = None) -> BlackjackSessionContext:
         async def runner() -> BlackjackSessionContext:
             self._ensure_event_available("player_move")
-            await self.player_move(position=position, action=action)
+            await self.player_move(position=position, action=action, hand_index=hand_index)
+            self._reconcile_player_turn_state()
             await self._drain_terminal_phases()
             return self.model
 
         return await self._run_transaction(runner)
 
     # Обрабатывает истечение таймера для текущего или явно переданного игрока.
-    async def handle_timeout(self, position: Optional[int] = None) -> BlackjackSessionContext:
+    async def handle_timeout(
+        self,
+        position: Optional[int] = None,
+        hand_index: Optional[int] = None,
+    ) -> BlackjackSessionContext:
         async def runner() -> BlackjackSessionContext:
             self._ensure_event_available("timeout_turn")
             timeout_position = position if position is not None else self.model.current_position
-            await self.timeout_turn(position=timeout_position)
+            await self.timeout_turn(position=timeout_position, hand_index=hand_index)
+            self._reconcile_player_turn_state()
             await self._drain_terminal_phases()
             return self.model
 
@@ -170,7 +176,7 @@ class BlackjackService(StateChart[BlackjackSessionContext]):
             return []
 
         moves: list[str] = []
-        for action in ("hit", "stand", "double"):
+        for action in ("hit", "stand", "double", "split", "insurance"):
             try:
                 self.turn_rules.validate_player_move(self.model, position=position, action=action, seat=seat)
             except ApiError:
@@ -179,13 +185,20 @@ class BlackjackService(StateChart[BlackjackSessionContext]):
         return moves
 
     # Подготавливает общий runtime-контекст для guards и action callbacks.
-    def prepare_event(self, event=None, position: Optional[int] = None, action: Optional[str] = None):
+    def prepare_event(
+        self,
+        event=None,
+        position: Optional[int] = None,
+        action: Optional[str] = None,
+        hand_index: Optional[int] = None,
+    ):
         return self.event_context_builder.build(
             model=self.model,
             event_id=getattr(event, "id", None),
             event_token=id(event) if event is not None else None,
             position=position,
             action=action,
+            hand_index=hand_index,
         )
 
     # Проверяет, что сессию действительно можно перевести из ожидания в раздачу.
@@ -193,7 +206,7 @@ class BlackjackService(StateChart[BlackjackSessionContext]):
         self.turn_rules.validate_can_start(self.model)
 
     # Валидирует допустимость действия игрока до выбора перехода state machine.
-    def validate_player_move(self, position: int, action: str, seat) -> None:
+    def validate_player_move(self, position: int, action: str, seat, hand_index: Optional[int] = None) -> None:
         self.turn_rules.validate_player_move(self.model, position=position, action=action, seat=seat)
 
     # Валидирует, что таймер реально истёк и событие можно трактовать как timeout.
@@ -260,10 +273,13 @@ class BlackjackService(StateChart[BlackjackSessionContext]):
         *,
         position: int,
         action: str,
+        hand_index: Optional[int],
         seat,
         drawn_card: Optional[str],
+        split_drawn_cards: list[str],
         projected_cards: list[str],
         projected_score: int,
+        dealer_blackjack: bool,
         next_position: Optional[int],
         target,
     ) -> None:
@@ -271,12 +287,15 @@ class BlackjackService(StateChart[BlackjackSessionContext]):
             ActionRuntimeContext(
                 position=position,
                 action=action,
+                hand_index=hand_index,
                 seat=seat,
                 target_state_id=target.id,
                 drawn_card=drawn_card,
+                split_drawn_cards=split_drawn_cards,
                 projected_cards=projected_cards,
                 projected_score=projected_score,
                 next_position=next_position,
+                dealer_blackjack=dealer_blackjack,
             )
         )
         next_timer = self._next_turn_timer() if decision.should_schedule_timer else None
@@ -314,7 +333,12 @@ class BlackjackService(StateChart[BlackjackSessionContext]):
 
     # Считает результаты раунда для всех игроков и подготавливает выплаты.
     async def settle_round(self) -> None:
-        settlements = self.settlement_policy.build_settlements(self.model.players, self.model.dealer_cards)
+        hands_by_position = await self.repository.load_unsettled_hands_by_position(self.model.session_id)
+        settlements = self.settlement_policy.build_settlements(
+            self.model.players,
+            self.model.dealer_cards,
+            hands_by_position=hands_by_position,
+        )
 
         await self.repository.persist_resolution(self.model, settlements=settlements)
 
@@ -373,3 +397,16 @@ class BlackjackService(StateChart[BlackjackSessionContext]):
         if self.model.current_timer is None:
             return False
         return self.model.current_timer <= utc_now_naive()
+
+    # Синхронизирует runtime-state с фактом наличия активного игрока после on-callback persistence.
+    # Это нужно для split-flow: репозиторий может переключить current_hand_index на следующую руку
+    # того же игрока уже после выбора перехода state machine.
+    def _reconcile_player_turn_state(self) -> None:
+        if self.current_state_value == "dealer_turn" and self.model.current_position is not None:
+            self.current_state_value = "player_turn"
+            self.model.state = "player_turn"
+            return
+
+        if self.current_state_value == "player_turn" and self.model.current_position is None:
+            self.current_state_value = "dealer_turn"
+            self.model.state = "dealer_turn"

@@ -101,9 +101,10 @@ Bot API возвращает канонический snapshot текущей и
 - `turn_version`
 - `current_timer`
 - `current_player`
+- `current_hand_index`
 - `available_moves`
 - `dealer`
-- `participants`
+- `participants` (включая `hands[]` для split-сценариев: `hand_index`, `cards`, `bet`, `status`)
 
 Если включен флаг `BOT_SNAPSHOT_INCLUDE_LEGACY_FIELDS`, snapshot может содержать дополнительные backward-compatible поля вроде `current_position`, `can_start` и `start_error`.
 

@@ -20,8 +20,9 @@ Kafka input contract с полями:
 - `actor_telegram_id`, `actor_username`, `actor_first_name`
 - `command_type`
 - `bet`
-- `action`
+- `action` (`hit|stand|double|split|insurance`)
 - `turn_version`
+- `hand_index`
 - `admin_target_username`
 
 ## `OrchestratorResult`
@@ -43,6 +44,7 @@ Redis-сущность короткоживущего chat context.
 - `session_id`
 - `reply_action_hint`
 - `turn_version`
+- `current_hand_index`
 - `current_timer`
 - `current_player_telegram_id`
 - `available_moves`
@@ -50,6 +52,7 @@ Redis-сущность короткоживущего chat context.
 
 Назначение:
 - контекстная маршрутизация `Начать игру`
+- наследование `turn_version`/`hand_index` для message/reply `player_action`
 - local guards для `player_action`
 - cleanup предыдущего сообщения состояния игры
 

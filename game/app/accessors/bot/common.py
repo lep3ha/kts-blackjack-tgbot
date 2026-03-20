@@ -57,7 +57,7 @@ class CommonBotMixin:
             if machine.model.current_position != seat.position:
                 raise StateConflictError("Actor is not the current active player")
 
-            context = await machine.apply_action(seat.position, payload.action)
+            context = await machine.apply_action(seat.position, payload.action, hand_index=payload.hand_index)
             return await self._build_session_snapshot(db, context.session_id)
 
         raise RuntimeError("Database session is unavailable")
@@ -85,7 +85,7 @@ class CommonBotMixin:
             if seat.participant_status in {ParticipantStatus.inactive, ParticipantStatus.settled}:
                 return await self._build_session_snapshot(db, session.id)
 
-            context = await machine.handle_timeout(seat.position)
+            context = await machine.handle_timeout(seat.position, hand_index=payload.hand_index)
             return await self._build_session_snapshot(db, context.session_id)
 
         raise RuntimeError("Database session is unavailable")
@@ -238,16 +238,18 @@ class CommonBotMixin:
                 return seat
         return None
 
-    async def _get_result_map(self, db: AsyncSession, session_id: int) -> dict[int, dict[str, int | str]]:
+    async def _get_result_map(self, db: AsyncSession, session_id: int) -> dict[int, dict[str, object]]:
         result = await db.execute(
             select(State.position, State.details)
             .where(State.session_id == session_id, State.action == "result")
             .order_by(State.id)
         )
-        payload: dict[int, dict[str, int | str]] = {}
+        payload: dict[int, dict[str, object]] = {}
         for position, details in result.all():
             payload[position] = {
                 "result": details.get("result"),
                 "delta": details.get("delta"),
+                "insurance_delta": details.get("insurance_delta", 0),
+                "hand_settlements": list(details.get("hand_settlements") or []),
             }
         return payload

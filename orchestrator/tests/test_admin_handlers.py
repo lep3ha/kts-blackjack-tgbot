@@ -210,3 +210,39 @@ def test_group_stop_handler_calls_group_player_stop():
 
     assert result.success is True
     client.group_player_stop.assert_awaited_once()
+
+
+def test_player_balance_handler_returns_bank_for_actor():
+    client = SimpleNamespace(
+        player_balance=AsyncMock(
+            return_value=_success_envelope(
+                {
+                    "id": 1,
+                    "telegram_id": "42",
+                    "username": "alice",
+                    "bank": 1337,
+                }
+            )
+        )
+    )
+    handlers = GameCommandHandlers(client)
+    command = _make_command(command_type="player_balance", actor_telegram_id="42", amount=None)
+
+    result = asyncio.run(handlers.handle_player_balance(command))
+
+    assert result.success is True
+    assert isinstance(result.data, dict)
+    assert result.data.get("bank") == 1337
+    client.player_balance.assert_awaited_once()
+
+
+def test_player_balance_handler_requires_actor_telegram_id():
+    client = SimpleNamespace(player_balance=AsyncMock())
+    handlers = GameCommandHandlers(client)
+    command = _make_command(command_type="player_balance", actor_telegram_id=None, amount=None)
+
+    result = asyncio.run(handlers.handle_player_balance(command))
+
+    assert result.success is False
+    assert result.error_code == "bad_request"
+    client.player_balance.assert_not_awaited()

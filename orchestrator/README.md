@@ -49,7 +49,11 @@ python run.py
 ## Важные runtime семантики
 
 - reply text `Присоединиться (N)` нормализуется в `group_join` с извлечением ставки;
+- callback `session:join:<bet>` нормализуется в `group_join`, callback `session:start:group` — в `group_start`;
+- post-game UX теперь inline-only: `session:create:group` -> `group_open`, `session:create:single` -> `single_start`;
 - `single_stop` на уровне bot UX идет в game как auto-stand текущего игрока;
+- split-контекст передается через `turn_version` и `hand_index`: callback payload вида `action:<move>:tv:<turn_version>:hand:<hand_index>`, а message/reply действия при отсутствии `tv`/`hand` наследуют значения из `SessionContext`;
+- страховка поддерживается как `player_action`: `/insurance`, `Insurance`, callback `action:insurance:tv:<turn_version>[:hand:<hand_index>]`;
 - local guards режут stale turn, ход не того игрока и недоступные действия до вызова game API;
 - таймеры ходов планируются через Redis worker и не должны отправлять ложные timeout-уведомления;
 - cleanup старого игрового сообщения выполняется только для успешного хода текущего игрока.

@@ -6,7 +6,7 @@ from pydantic import ConfigDict
 
 
 ChatType = Literal["group", "single"]
-PlayerActionType = Literal["hit", "stand", "double"]
+PlayerActionType = Literal["hit", "stand", "double", "split", "insurance"]
 
 
 class GroupOpenRequest(BaseModel):
@@ -70,6 +70,10 @@ class RegisterPlayerRequest(BaseModel):
     bank: int
 
 
+class PlayerBalanceRequest(BaseModel):
+    telegram_id: str
+
+
 class PlayerActionRequest(BaseModel):
     chat_id: str
     chat_type: ChatType
@@ -78,12 +82,14 @@ class PlayerActionRequest(BaseModel):
     actor_first_name: str | None = None
     action: PlayerActionType
     turn_version: int
+    hand_index: int | None = None
 
 
 class TimeoutTurnRequest(BaseModel):
     chat_id: str
     chat_type: ChatType
     turn_version: int
+    hand_index: int | None = None
 
 
 class CurrentSessionRequest(BaseModel):
